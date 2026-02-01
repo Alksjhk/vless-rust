@@ -1,0 +1,12 @@
+{
+  "server": {
+    "listen": "0.0.0.0",
+    "port": 8443
+  },
+  "users": [
+    {
+      "uuid": "615767da-4db9-4df7-9f12-d7d617fc1d96",
+      "email": "user1@example.com"
+    }
+  ]
+}
