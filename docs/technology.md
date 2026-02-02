@@ -280,7 +280,18 @@ static/                    # 构建后的静态文件目录
 - 优化级别：size
 - 移除调试信息
 - panic=abort减小体积
-- 静态资源嵌入，单文件部署（约814KB）
+- 静态资源嵌入，单文件部署（约934KB）
+
+### 跨平台编译
+- **Windows**: CRT 静态链接，生成零依赖单一 exe 文件
+- **Linux**: CRT 静态链接，生成静态二进制文件
+- **本地编译**: 通过 .cargo/config.toml 配置与 CI 保持一致
+
+### 配置方式
+```toml
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+```
 
 ## 参考资料
 
