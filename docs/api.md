@@ -2,125 +2,160 @@
 
 ## 概述
 
-VLESS监控页面提供RESTful API接口，用于获取服务器运行状态和监控数据。
+VLESS-Rust 提供 RESTful API 和 WebSocket 实时推送接口，用于获取服务器监控数据和配置信息。
 
 ## 基础信息
 
-- **Base URL**: `http://your-server-ip:port`
-- **协议**: HTTP/1.1
-- **响应格式**: JSON
+- **Base URL**: `http://your-server:8443`
+- **Content-Type**: `application/json`
 - **字符编码**: UTF-8
 
-## 接口列表
+## REST API 端点
 
-### 1. 获取监控数据
+### 1. 获取实时监控数据
 
-获取服务器实时监控数据，包括传输速度、流量统计、运行时长等信息。
+获取服务器当前的实时监控数据，包括流量统计、连接数、内存使用等信息。
 
-#### 请求
-
+**请求**
 ```http
-GET /api/stats HTTP/1.1
-Host: your-server-ip:port
-Accept: application/json
+GET /api/stats
 ```
 
-#### 响应
-
-**状态码**: 200 OK
-
-**响应体**:
+**响应示例**
 ```json
 {
-  "upload_speed": "1.2 MB/s",
-  "download_speed": "3.5 MB/s",
-  "total_traffic": "10.5 GB",
-  "uptime": "2 days 3 hours 45 minutes",
-  "memory_usage": "45.2 MB",
-  "active_connections": 12
+  "upload_speed": "1.23 MB/s",
+  "download_speed": "2.34 MB/s",
+  "total_traffic": "15.67 GB",
+  "uptime": "2d 5h 30m 15s",
+  "memory_usage": "45.67 MB",
+  "total_memory": "16.00 GB",
+  "active_connections": 5,
+  "max_connections": 300,
+  "users": [
+    {
+      "uuid": "12345678-1234-1234-1234-123456789abc",
+      "email": "user1@example.com",
+      "upload_speed": "0 B/s",
+      "download_speed": "0 B/s",
+      "total_traffic": "5.23 GB",
+      "active_connections": 2
+    }
+  ]
 }
 ```
 
-#### 字段说明
+**字段说明**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| upload_speed | string | 上传速度（格式化字符串） |
+| download_speed | string | 下载速度（格式化字符串） |
+| total_traffic | string | 总流量（上传+下载） |
+| uptime | string | 服务器运行时长 |
+| memory_usage | string | 当前内存使用量 |
+| total_memory | string | 系统总内存 |
+| active_connections | number | 当前活动连接数 |
+| max_connections | number | 最大连接数限制 |
+| users | array | 用户统计数组 |
 
-| 字段 | 类型 | 说明 | 示例 |
-|------|------|------|------|
-| upload_speed | string | 上传速度，自动格式化 | "1.2 MB/s" |
-| download_speed | string | 下载速度，自动格式化 | "3.5 MB/s" |
-| total_traffic | string | 总流量（上传+下载），自动格式化 | "10.5 GB" |
-| uptime | string | 服务器运行时长 | "2d 3h 45m 30s" |
-| memory_usage | string | 内存使用量，自动格式化 | "45.2 MB" |
-| total_memory | string | 总内存容量，自动格式化 | "16.0 GB" |
-| active_connections | number | 当前活动连接数 | 12 |
-| max_connections | number | 最大连接数 | 300 |
+**用户统计对象 (users)**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| uuid | string | 用户 UUID |
+| email | string/null | 用户邮箱 |
+| upload_speed | string | 用户上传速度 |
+| download_speed | string | 用户下载速度 |
+| total_traffic | string | 用户总流量 |
+| active_connections | number | 用户活动连接数 |
 
-#### 错误响应
+---
 
-**状态码**: 500 Internal Server Error
+### 2. 获取用户流量统计
 
-```json
-{
-  "error": "Internal server error"
-}
-```
+获取所有用户的累计流量统计信息。
 
-### 2. 获取速度历史
-
-获取服务器速度历史数据，用于绘制趋势图。
-
-#### 请求
-
+**请求**
 ```http
-GET /api/speed-history HTTP/1.1
-Host: your-server-ip:port
-Accept: application/json
+GET /api/user-stats
 ```
 
-#### 响应
+**响应示例**
+```json
+[
+  {
+    "uuid": "12345678-1234-1234-1234-123456789abc",
+    "email": "user1@example.com",
+    "upload_speed": "0 B/s",
+    "download_speed": "0 B/s",
+    "total_traffic": "5.23 GB",
+    "active_connections": 2
+  },
+  {
+    "uuid": "87654321-4321-4321-4321-cba987654321",
+    "email": null,
+    "upload_speed": "0 B/s",
+    "download_speed": "0 B/s",
+    "total_traffic": "10.45 GB",
+    "active_connections": 3
+  }
+]
+```
 
-**状态码**: 200 OK
+**字段说明**: 同 `/api/stats` 中的 `users` 数组项。
 
-**响应体**:
+---
+
+### 3. 获取速度历史数据
+
+获取服务器最近一段时间（默认 60 秒）的速度历史记录。
+
+**请求**
+```http
+GET /api/speed-history
+```
+
+**响应示例**
 ```json
 {
   "history": [
     {
       "timestamp": "0",
-      "upload_speed": "1.2 MB/s",
-      "download_speed": "3.5 MB/s"
+      "upload_speed": "1.23 MB/s",
+      "download_speed": "2.34 MB/s"
+    },
+    {
+      "timestamp": "1",
+      "upload_speed": "1.45 MB/s",
+      "download_speed": "2.56 MB/s"
     }
   ],
   "duration_seconds": 60
 }
 ```
 
-#### 字段说明
-
+**字段说明**
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| history | array | 历史数据数组，最多120个数据点 |
-| history[].timestamp | string | 时间戳（相对值，秒） |
+| history | array | 历史数据点数组 |
+| history[].timestamp | string | 时间戳（相对于服务器启动的秒数） |
 | history[].upload_speed | string | 上传速度 |
 | history[].download_speed | string | 下载速度 |
-| duration_seconds | number | 历史数据覆盖的时长（秒） |
+| duration_seconds | number | 历史数据时长（秒） |
 
-### 3. 获取监控配置
+**用途**: 用于绘制流量趋势图。
 
-获取服务器的监控配置参数，包括历史时长、广播间隔等可配置项。
+---
 
-#### 请求
+### 4. 获取监控配置
 
+获取服务器当前的监控参数配置。
+
+**请求**
 ```http
-GET /api/config HTTP/1.1
-Host: your-server-ip:port
-Accept: application/json
+GET /api/config
 ```
 
-#### 响应
-
-**状态码**: 200 OK
-
-**响应体**:
+**响应示例**
 ```json
 {
   "speed_history_duration": 60,
@@ -131,33 +166,27 @@ Accept: application/json
 }
 ```
 
-#### 字段说明
+**字段说明**
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| speed_history_duration | number | 60 | 速度历史保留时长（秒） |
+| broadcast_interval | number | 1 | WebSocket 广播间隔（秒） |
+| websocket_max_connections | number | 300 | WebSocket 最大连接数 |
+| websocket_heartbeat_timeout | number | 60 | WebSocket 心跳超时（秒） |
+| vless_max_connections | number | 300 | VLESS 最大连接数 |
 
-| 字段 | 类型 | 说明 | 默认值 |
-|------|------|------|--------|
-| speed_history_duration | number | 流量历史保留时长（秒） | 60 |
-| broadcast_interval | number | WebSocket广播间隔（秒） | 1 |
-| websocket_max_connections | number | WebSocket最大连接数 | 300 |
-| websocket_heartbeat_timeout | number | WebSocket心跳超时（秒） | 60 |
-| vless_max_connections | number | VLESS最大连接数 | 300 |
+---
 
-### 4. 获取性能配置
+### 5. 获取性能配置
 
-获取服务器的性能优化配置参数。
+获取服务器当前的性能优化参数配置。
 
-#### 请求
-
+**请求**
 ```http
-GET /api/performance HTTP/1.1
-Host: your-server-ip:port
-Accept: application/json
+GET /api/performance
 ```
 
-#### 响应
-
-**状态码**: 200 OK
-
-**响应体**:
+**响应示例**
 ```json
 {
   "buffer_size": 131072,
@@ -168,62 +197,48 @@ Accept: application/json
 }
 ```
 
-#### 字段说明
+**字段说明**
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| buffer_size | number | 131072 | 传输缓冲区大小（字节），默认 128KB |
+| tcp_nodelay | boolean | true | 是否启用 TCP_NODELAY |
+| tcp_recv_buffer | number | 262144 | TCP 接收缓冲区大小（字节），默认 256KB |
+| tcp_send_buffer | number | 262144 | TCP 发送缓冲区大小（字节），默认 256KB |
+| stats_batch_size | number | 65536 | 流量统计批量大小（字节），默认 64KB |
 
-| 字段 | 类型 | 说明 | 默认值 |
-|------|------|------|--------|
-| buffer_size | number | 传输缓冲区大小（字节） | 131072 (128KB) |
-| tcp_nodelay | boolean | 是否启用TCP_NODELAY | true |
-| tcp_recv_buffer | number | TCP接收缓冲区大小（字节） | 262144 (256KB) |
-| tcp_send_buffer | number | TCP发送缓冲区大小（字节） | 262144 (256KB) |
-| stats_batch_size | number | 流量统计批量大小（字节） | 65536 (64KB) |
+---
 
-### 5. WebSocket 实时推送
+## WebSocket API
 
-建立 WebSocket 连接接收实时监控数据推送。
+### 连接端点
 
-#### 连接
+WebSocket 提供实时数据推送，是推荐的数据获取方式。
 
-```javascript
-const ws = new WebSocket('ws://your-server-ip:port/api/ws');
+**连接 URL**
+```
+ws://your-server:8443/api/ws
+wss://your-server:8443/api/ws  (如果使用 TLS)
 ```
 
-#### 消息格式
-
-所有消息采用 JSON 格式，包含 `type` 和 `payload` 字段：
-
-```json
-{
-  "type": "stats|history",
-  "payload": { /* 数据对象 */ }
-}
+**备用端点**
+```
+ws://your-server:8443/ws
 ```
 
-#### 消息类型
+### 连接流程
 
-##### stats 消息
+1. **握手**: 客户端发送 WebSocket 升级请求
+2. **验证**: 服务器验证 Origin 头（可通过 `VLESS_MONITOR_ORIGIN` 环境变量配置）
+3. **推送历史**: 连接建立后，服务器立即推送历史速度数据
+4. **实时推送**: 之后每秒推送一次实时监控数据
 
-推送当前实时统计数据，格式与 `/api/stats` 响应相同。
+### 消息格式
 
-```json
-{
-  "type": "stats",
-  "payload": {
-    "upload_speed": "1.2 MB/s",
-    "download_speed": "3.5 MB/s",
-    "total_traffic": "10.5 GB",
-    "uptime": "2d 3h 45m 30s",
-    "memory_usage": "45.2 MB",
-    "total_memory": "16.0 GB",
-    "active_connections": 12,
-    "max_connections": 300
-  }
-}
-```
+所有消息采用 JSON 格式，包含 `type` 和 `payload` 字段。
 
-##### history 消息
+#### 1. 历史数据消息
 
-连接建立后推送一次历史数据，格式与 `/api/speed-history` 响应相同。
+连接建立后的第一条消息。
 
 ```json
 {
@@ -232,269 +247,261 @@ const ws = new WebSocket('ws://your-server-ip:port/api/ws');
     "history": [
       {
         "timestamp": "0",
-        "upload_speed": "1.2 MB/s",
-        "download_speed": "3.5 MB/s"
+        "upload_speed": "1.23 MB/s",
+        "download_speed": "2.34 MB/s"
       }
     ],
-    "duration_seconds": 120
+    "duration_seconds": 60
   }
 }
 ```
 
-#### 推送频率
+**payload 结构**: 同 REST API 的 `/api/speed-history` 响应。
 
-- `stats` 消息：每秒推送一次
-- `history` 消息：仅在连接建立时推送一次
+#### 2. 实时数据消息
 
-#### 连接管理
+每秒推送一次。
 
-- 最大并发连接数：300
-- 心跳超时：60秒
-- 支持 Origin 验证（通过 `VLESS_MONITOR_ORIGIN` 环境变量配置）
+```json
+{
+  "type": "stats",
+  "payload": {
+    "upload_speed": "1.23 MB/s",
+    "download_speed": "2.34 MB/s",
+    "total_traffic": "15.67 GB",
+    "uptime": "2d 5h 30m 15s",
+    "memory_usage": "45.67 MB",
+    "total_memory": "16.00 GB",
+    "active_connections": 5,
+    "max_connections": 300,
+    "users": [...]
+  }
+}
+```
 
-#### 使用示例
+**payload 结构**: 同 REST API 的 `/api/stats` 响应。
+
+### 心跳机制
+
+- **服务器 → 客户端**: 定期发送 Ping 帧
+- **客户端 → 服务器**: 应答 Pong 帧
+- **超时断开**: 60 秒无活动自动断开连接
+
+### Origin 验证
+
+为了防止 CSRF 攻击，服务器会验证 WebSocket 请求的 Origin 头。
+
+**配置方式**
+```bash
+# 设置允许的来源
+export VLESS_MONITOR_ORIGIN="https://your-domain.com"
+
+# Windows
+set VLESS_MONITOR_ORIGIN=https://your-domain.com
+```
+
+**未配置行为**: 如果未设置环境变量，允许所有来源（仅开发模式）。
+
+### 连接限制
+
+- **最大连接数**: 300（可通过配置修改）
+- **超出限制**: 返回 1011 状态码，原因 "Server full"
+
+### 错误处理
+
+**连接关闭码**
+| 状态码 | 说明 |
+|--------|------|
+| 1000 | 正常关闭 |
+| 1001 | 端点关闭 |
+| 1006 | 异常关闭 |
+| 1011 | 服务器错误（如达到最大连接数） |
+
+---
+
+## 前端集成示例
+
+### REST API 轮询
 
 ```javascript
+// 获取实时监控数据
+async function getStats() {
+  const response = await fetch('/api/stats');
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  console.log('上传速度:', data.upload_speed);
+  console.log('下载速度:', data.download_speed);
+  return data;
+}
+
+// 每秒轮询
+setInterval(getStats, 1000);
+```
+
+### WebSocket 实时推送
+
+```javascript
+// 连接 WebSocket
 const ws = new WebSocket('ws://localhost:8443/api/ws');
 
 ws.onopen = () => {
-  console.log('WebSocket connected');
+  console.log('WebSocket 已连接');
 };
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
 
-  if (msg.type === 'stats') {
-    console.log('Upload:', msg.payload.upload_speed);
-    console.log('Download:', msg.payload.download_speed);
-  } else if (msg.type === 'history') {
-    console.log('History data:', msg.payload.history);
+  if (msg.type === 'history') {
+    console.log('收到历史数据:', msg.payload);
+    // 初始化图表
+  } else if (msg.type === 'stats') {
+    console.log('收到实时数据:', msg.payload);
+    // 更新 UI
   }
 };
 
 ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
+  console.error('WebSocket 错误:', error);
 };
 
-ws.onclose = () => {
-  console.log('WebSocket disconnected');
+ws.onclose = (event) => {
+  console.log('WebSocket 已关闭:', event.code, event.reason);
+  // 可实现重连逻辑
 };
 ```
 
-### 6. 获取监控页面
-
-获取监控页面的HTML内容，用于在浏览器中显示监控仪表盘。
-
-#### 请求
-
-```http
-GET / HTTP/1.1
-Host: your-server-ip:port
-Accept: text/html
-```
-
-#### 响应
-
-**状态码**: 200 OK
-
-**Content-Type**: text/html; charset=utf-8
-
-**响应体**: 完整的HTML页面，包含：
-- 监控仪表盘UI
-- 内联CSS样式
-- JavaScript轮询逻辑
-- 深色/浅色主题切换
-
-#### 页面特性
-
-- **自动刷新**: 每2秒自动更新数据
-- **主题切换**: 支持深色/浅色主题，使用localStorage持久化
-- **响应式设计**: 适配桌面、平板、移动设备
-- **数据可视化**: 进度条、图表展示
-
-#### 错误响应
-
-**状态码**: 404 Not Found
-
-```html
-Not Found
-```
-
-## 数据格式说明
-
-### 速度格式
-
-速度值自动格式化，支持以下单位：
-- B/s: 字节/秒
-- KB/s: 千字节/秒
-- MB/s: 兆字节/秒
-- GB/s: 吉字节/秒
-
-示例：
-- "1024 B/s"
-- "1.5 MB/s"
-- "2.3 GB/s"
-
-### 流量格式
-
-流量值自动格式化，支持以下单位：
-- B: 字节
-- KB: 千字节
-- MB: 兆字节
-- GB: 吉字节
-- TB: 太字节
-
-示例：
-- "1024 B"
-- "1.5 MB"
-- "10.5 GB"
-
-### 时间格式
-
-运行时长根据长度自动调整格式：
-- 小于1分钟: "30s"
-- 小于1小时: "45m 30s"
-- 小于1天: "2h 45m 30s"
-- 大于1天: "2d 3h 45m 30s"
-
-## 使用示例
-
-### JavaScript (浏览器)
+### API 降级策略
 
 ```javascript
-// 获取监控数据
-async function fetchStats() {
-  try {
-    const response = await fetch('/api/stats');
-    const data = await response.json();
-    console.log('Upload speed:', data.upload_speed);
-    console.log('Download speed:', data.download_speed);
-    console.log('Total traffic:', data.total_traffic);
-    console.log('Uptime:', data.uptime);
-    console.log('Memory usage:', data.memory_usage);
-    console.log('Active connections:', data.active_connections);
-  } catch (error) {
-    console.error('Failed to fetch stats:', error);
+class MonitorClient {
+  constructor() {
+    this.ws = null;
+    this.pollingInterval = null;
+  }
+
+  connect() {
+    // 尝试 WebSocket
+    this.ws = new WebSocket('ws://localhost:8443/api/ws');
+
+    this.ws.onopen = () => {
+      console.log('WebSocket 已连接');
+      this.stopPolling();
+    };
+
+    this.ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      this.handleData(msg);
+    };
+
+    this.ws.onerror = () => {
+      console.log('WebSocket 失败，降级到 API 轮询');
+      this.startPolling();
+    };
+
+    this.ws.onclose = () => {
+      if (!this.pollingInterval) {
+        console.log('WebSocket 断开，启动 API 轮询');
+        this.startPolling();
+      }
+    };
+  }
+
+  startPolling() {
+    if (this.pollingInterval) return;
+
+    this.fetchData(); // 立即获取一次
+    this.pollingInterval = setInterval(() => {
+      this.fetchData();
+    }, 1000);
+  }
+
+  stopPolling() {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
+  }
+
+  async fetchData() {
+    try {
+      const response = await fetch('/api/stats');
+      const data = await response.json();
+      this.handleData({ type: 'stats', payload: data });
+    } catch (error) {
+      console.error('API 轮询失败:', error);
+    }
+  }
+
+  handleData(msg) {
+    if (msg.type === 'stats') {
+      // 更新 UI
+      console.log('上传速度:', msg.payload.upload_speed);
+    }
   }
 }
 
-// 每2秒更新一次
-setInterval(fetchStats, 2000);
+// 使用
+const client = new MonitorClient();
+client.connect();
 ```
 
-### Python
+---
 
-```python
-import requests
-import time
+## 错误码
 
-def fetch_stats():
-    try:
-        response = requests.get('http://your-server-ip:8443/api/stats')
-        data = response.json()
-        print(f"Upload speed: {data['upload_speed']}")
-        print(f"Download speed: {data['download_speed']}")
-        print(f"Total traffic: {data['total_traffic']}")
-        print(f"Uptime: {data['uptime']}")
-        print(f"Memory usage: {data['memory_usage']}")
-        print(f"Active connections: {data['active_connections']}")
-    except requests.RequestException as e:
-        print(f"Failed to fetch stats: {e}")
+### HTTP 状态码
 
-# 每2秒更新一次
-while True:
-    fetch_stats()
-    time.sleep(2)
-```
+| 状态码 | 说明 | 示例 |
+|--------|------|------|
+| 200 | 成功 | 数据正常返回 |
+| 404 | 未找到 | 请求的端点不存在 |
+| 500 | 服务器错误 | 内部处理错误 |
 
-### cURL
+### WebSocket 关闭码
 
-```bash
-# 获取监控数据
-curl http://your-server-ip:8443/api/stats
+| 状态码 | 说明 |
+|--------|------|
+| 1000 | 正常关闭 |
+| 1001 | 端点离开 |
+| 1006 | 异常关闭（网络错误） |
+| 1011 | 服务器错误（如达到最大连接数） |
 
-# 获取监控页面
-curl http://your-server-ip:8443/
+---
 
-# 格式化JSON输出
-curl http://your-server-ip:8443/api/stats | jq
-```
+## 性能建议
 
-### Go
+### REST API
+- **轮询间隔**: 建议不低于 1 秒
+- **超时设置**: 建议 5 秒
+- **重试策略**: 指数退避，最多 3 次
 
-```go
-package main
+### WebSocket
+- **重连延迟**: 建议从 1 秒开始，指数增长至 30 秒
+- **心跳检测**: 客户端应响应服务器的 Ping 帧
+- **缓冲限制**: 客户端应限制消息队列大小
 
-import (
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "time"
-)
+---
 
-type MonitorData struct {
-    UploadSpeed       string `json:"upload_speed"`
-    DownloadSpeed     string `json:"download_speed"`
-    TotalTraffic      string `json:"total_traffic"`
-    Uptime            string `json:"uptime"`
-    MemoryUsage       string `json:"memory_usage"`
-    ActiveConnections int    `json:"active_connections"`
-}
+## 安全建议
 
-func fetchStats() (*MonitorData, error) {
-    resp, err := http.Get("http://your-server-ip:8443/api/stats")
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
+1. **使用 TLS**: 生产环境建议使用 WSS (WebSocket Secure)
+2. **Origin 验证**: 设置 `VLESS_MONITOR_ORIGIN` 环境变量
+3. **访问控制**: 配置防火墙限制访问监控页面
+4. **认证机制**: 当前监控页面无认证，建议通过反向代理添加
 
-    var data MonitorData
-    if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-        return nil, err
-    }
-
-    return &data, nil
-}
-
-func main() {
-    for {
-        data, err := fetchStats()
-        if err != nil {
-            fmt.Printf("Error: %v\n", err)
-        } else {
-            fmt.Printf("Upload: %s, Download: %s, Total: %s\n",
-                data.UploadSpeed, data.DownloadSpeed, data.TotalTraffic)
-        }
-        time.Sleep(5 * time.Second)
-    }
-}
-```
-
-## 注意事项
-
-### 性能考虑
-- API响应时间通常在10ms以内
-- 建议轮询间隔不小于2秒
-- 避免频繁请求以减少服务器负载
-
-### 数据准确性
-- 速度数据基于最近10秒的流量计算
-- 总流量数据每10分钟持久化一次
-- 内存使用量为服务器进程的内存占用
-
-### 错误处理
-- 网络错误应进行重试
-- 建议实现超时机制
-- 解析错误应记录日志
-
-### 安全建议
-- 在生产环境建议使用HTTPS
-- 限制API访问频率
-- 考虑添加认证机制
+---
 
 ## 版本历史
 
-### v1.0.0 (2026-02-01)
-- 初始版本
-- 支持获取监控数据
-- 支持获取监控页面
+- **v1.1.0**: 添加 WebSocket 实时推送
+- **v1.0.0**: 初始 REST API
+
+---
+
+## 相关文档
+
+- [技术文档](./technology.md)
+- [项目 README](../README.md)
+- [VLESS 协议规范](https://xtls.github.io/en/development/protocols/vless.html)

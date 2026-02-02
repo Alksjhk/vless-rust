@@ -59,13 +59,14 @@ npm run preview
 - `src/server.rs`: 服务器核心逻辑，处理连接、用户认证和 TCP 代理转发
 - `src/stats.rs`: 流量统计模块，使用快照机制计算速度，支持持久化到配置文件
 - `src/http.rs`: HTTP 请求检测、静态文件服务和监控 API 端点
+- `src/ws.rs`: WebSocket 实时数据推送管理
 
 **前端架构：**
 
 - Vue 3 Composition API
 - Vite 构建工具（使用 rolldown-vite 优化）
 - 组件化设计，每个统计指标独立组件
-- Composables 模式（useStats、useTheme）
+- Composables 模式（useStats、useTheme、useWebSocket）
 - CSS 变量实现主题切换
 
 ### 关键设计模式
@@ -103,8 +104,8 @@ npm run preview
     }
   ],
   "monitor": {
-    "total_bytes_sent": 0,
-    "total_bytes_received": 0,
+    "total_upload_bytes": 0,
+    "total_download_bytes": 0,
     "last_update": "2024-01-01T00:00:00Z"
   },
   "monitoring": {

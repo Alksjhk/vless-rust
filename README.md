@@ -227,15 +227,6 @@ npm run dev
    export VLESS_MONITOR_ORIGIN="https://your-domain.com"
    ```
 
-## 开发计划
-
-- [ ] UDP协议支持
-- [ ] Mux多路复用支持
-- [ ] XTLS集成
-- [ ] WebSocket传输层
-- [ ] gRPC传输层
-- [ ] 动态配置重载
-
 ## 协议参考
 
 - [VLESS协议规范](https://xtls.github.io/en/development/protocols/vless.html)
