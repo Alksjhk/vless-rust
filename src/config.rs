@@ -36,6 +36,12 @@ pub struct PerformanceConfig {
     /// 流量统计批量大小（字节数），累积到此数量才更新统计，默认64KB
     #[serde(default = "default_stats_batch_size")]
     pub stats_batch_size: usize,
+    /// UDP会话超时时间（秒），默认30秒
+    #[serde(default = "default_udp_timeout")]
+    pub udp_timeout: u64,
+    /// UDP接收缓冲区大小（字节），默认64KB
+    #[serde(default = "default_udp_recv_buffer")]
+    pub udp_recv_buffer: usize,
 }
 
 fn default_history_duration() -> u64 { 60 }
@@ -50,6 +56,8 @@ fn default_tcp_recv_buffer() -> usize { 256 * 1024 }  // 256KB
 fn default_tcp_send_buffer() -> usize { 256 * 1024 }  // 256KB
 fn default_tcp_nodelay() -> bool { true }
 fn default_stats_batch_size() -> usize { 64 * 1024 }  // 64KB
+fn default_udp_timeout() -> u64 { 30 }
+fn default_udp_recv_buffer() -> usize { 64 * 1024 }  // 64KB
 
 impl Default for MonitoringConfig {
     fn default() -> Self {
@@ -71,6 +79,8 @@ impl Default for PerformanceConfig {
             tcp_send_buffer: default_tcp_send_buffer(),
             tcp_nodelay: default_tcp_nodelay(),
             stats_batch_size: default_stats_batch_size(),
+            udp_timeout: default_udp_timeout(),
+            udp_recv_buffer: default_udp_recv_buffer(),
         }
     }
 }
@@ -143,9 +153,16 @@ mod tests {
         let config = Config::default();
         let json = config.to_json().unwrap();
         let parsed = Config::from_json(&json).unwrap();
-        
+
         assert_eq!(config.server.listen, parsed.server.listen);
         assert_eq!(config.server.port, parsed.server.port);
         assert_eq!(config.users.len(), parsed.users.len());
+    }
+
+    #[test]
+    fn test_udp_config_defaults() {
+        let config = PerformanceConfig::default();
+        assert_eq!(config.udp_timeout, 30);
+        assert_eq!(config.udp_recv_buffer, 64 * 1024);
     }
 }

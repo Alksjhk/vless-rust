@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 
@@ -239,8 +239,8 @@ impl VlessServer {
                 Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email).await
             }
             Command::Udp => {
-                warn!("UDP command not implemented yet");
-                Err(anyhow!("UDP not supported"))
+                let user_email = config.get_user_email(&request.uuid);
+                Self::handle_udp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email).await
             }
             Command::Mux => {
                 warn!("Mux command not implemented yet");
@@ -388,6 +388,156 @@ impl VlessServer {
         let _ = tokio::join!(upload_task, download_task);
 
         debug!("Proxy connection closed");
+        Ok(())
+    }
+
+    /// 处理UDP代理（UDP over TCP机制）
+    async fn handle_udp_proxy(
+        client_stream: TcpStream,
+        request: VlessRequest,
+        _initial_data: Bytes,
+        stats: SharedStats,
+        perf_config: PerformanceConfig,
+        user_email: Option<String>,
+    ) -> Result<()> {
+        let uuid_str = request.uuid.to_string();
+
+        // 解析目标地址
+        let target_addr = match &request.address {
+            Address::Domain(domain) => {
+                let addr_str = format!("{}:{}", domain, request.port);
+                let resolved = tokio::net::lookup_host(&addr_str)
+                    .await?
+                    .next()
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                resolved
+            }
+            _ => request.address.to_socket_addr(request.port)?,
+        };
+
+        info!("Establishing UDP proxy: {:?} -> {}", client_stream.peer_addr(), target_addr);
+
+        // 绑定本地UDP socket（随机端口）
+        let udp_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let local_addr = udp_socket.local_addr()?;
+        debug!("UDP socket bound to {}", local_addr);
+
+        let batch_size = perf_config.stats_batch_size as u64;
+        let udp_timeout = perf_config.udp_timeout;
+        let udp_recv_buffer = perf_config.udp_recv_buffer;
+
+        // 分离TCP流
+        let (mut client_read, mut client_write) = client_stream.into_split();
+
+        // 任务1：客户端 → 目标（读取TCP数据，发送UDP包）
+        let udp_socket_c2t = Arc::clone(&udp_socket);
+        let stats_c2t = stats.clone();
+        let uuid_c2t = uuid_str.clone();
+        let email_c2t = user_email.clone();
+
+        let client_to_target = tokio::spawn(async move {
+            let mut buffer = vec![0u8; udp_recv_buffer];
+            let mut total = 0u64;
+            let mut batch_total = 0u64;
+
+            loop {
+                // 超时检测
+                let timeout_duration = std::time::Duration::from_secs(udp_timeout);
+                let timeout_result = tokio::time::timeout(timeout_duration, client_read.read(&mut buffer)).await;
+
+                match timeout_result {
+                    Ok(Ok(0)) => {
+                        debug!("Client closed connection");
+                        break;
+                    }
+                    Ok(Ok(n)) => {
+                        total += n as u64;
+                        batch_total += n as u64;
+
+                        // 发送UDP包到目标
+                        if let Err(e) = udp_socket_c2t.send_to(&buffer[..n], target_addr).await {
+                            warn!("Failed to send UDP packet: {}", e);
+                            break;
+                        }
+
+                        // 批量更新统计
+                        if batch_total >= batch_size {
+                            stats_c2t.lock().await.add_upload_bytes(batch_total);
+                            stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t.clone());
+                            batch_total = 0;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Error reading from client: {}", e);
+                        break;
+                    }
+                    Err(_) => {
+                        debug!("UDP session timeout after {}s of inactivity", udp_timeout);
+                        break;
+                    }
+                }
+            }
+
+            // 处理剩余的批量统计
+            if batch_total > 0 {
+                stats_c2t.lock().await.add_upload_bytes(batch_total);
+                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t);
+            }
+
+            total
+        });
+
+        // 任务2：目标 → 客户端（接收UDP包，写入TCP流）
+        let udp_socket_t2c = Arc::clone(&udp_socket);
+        let stats_t2c = stats.clone();
+        let uuid_t2c = uuid_str.clone();
+        let email_t2c = user_email;
+
+        let target_to_client = tokio::spawn(async move {
+            let mut buffer = vec![0u8; udp_recv_buffer];
+            let mut total = 0u64;
+            let mut batch_total = 0u64;
+
+            loop {
+                match udp_socket_t2c.recv_from(&mut buffer).await {
+                    Ok((n, src)) => {
+                        // 只接收来自目标地址的UDP包
+                        if src == target_addr {
+                            total += n as u64;
+                            batch_total += n as u64;
+
+                            if client_write.write_all(&buffer[..n]).await.is_err() {
+                                break;
+                            }
+
+                            // 批量更新统计
+                            if batch_total >= batch_size {
+                                stats_t2c.lock().await.add_download_bytes(batch_total);
+                                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c.clone());
+                                batch_total = 0;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error receiving UDP packet: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // 处理剩余的批量统计
+            if batch_total > 0 {
+                stats_t2c.lock().await.add_download_bytes(batch_total);
+                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c);
+            }
+
+            total
+        });
+
+        // 等待两个任务完成
+        let _ = tokio::join!(client_to_target, target_to_client);
+
+        debug!("UDP proxy session closed");
         Ok(())
     }
 }
