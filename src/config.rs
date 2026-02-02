@@ -19,11 +19,38 @@ pub struct MonitoringConfig {
     pub vless_max_connections: usize,
 }
 
+/// 性能优化配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerformanceConfig {
+    /// 传输缓冲区大小（字节），默认128KB
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: usize,
+    /// TCP接收缓冲区大小（字节），0表示使用系统默认，默认256KB
+    #[serde(default = "default_tcp_recv_buffer")]
+    pub tcp_recv_buffer: usize,
+    /// TCP发送缓冲区大小（字节），0表示使用系统默认，默认256KB
+    #[serde(default = "default_tcp_send_buffer")]
+    pub tcp_send_buffer: usize,
+    /// 是否启用TCP_NODELAY，默认true
+    #[serde(default = "default_tcp_nodelay")]
+    pub tcp_nodelay: bool,
+    /// 流量统计批量大小（字节数），累积到此数量才更新统计，默认64KB
+    #[serde(default = "default_stats_batch_size")]
+    pub stats_batch_size: usize,
+}
+
 fn default_history_duration() -> u64 { 60 }
 fn default_broadcast_interval() -> u64 { 1 }
-fn default_ws_max_connections() -> usize { 100 }
+fn default_ws_max_connections() -> usize { 300 }
 fn default_ws_heartbeat_timeout() -> u64 { 60 }
-fn default_vless_max_connections() -> usize { 100 }
+fn default_vless_max_connections() -> usize { 300 }
+
+// Performance config defaults
+fn default_buffer_size() -> usize { 128 * 1024 }  // 128KB
+fn default_tcp_recv_buffer() -> usize { 256 * 1024 }  // 256KB
+fn default_tcp_send_buffer() -> usize { 256 * 1024 }  // 256KB
+fn default_tcp_nodelay() -> bool { true }
+fn default_stats_batch_size() -> usize { 64 * 1024 }  // 64KB
 
 impl Default for MonitoringConfig {
     fn default() -> Self {
@@ -37,6 +64,18 @@ impl Default for MonitoringConfig {
     }
 }
 
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            buffer_size: default_buffer_size(),
+            tcp_recv_buffer: default_tcp_recv_buffer(),
+            tcp_send_buffer: default_tcp_send_buffer(),
+            tcp_nodelay: default_tcp_nodelay(),
+            stats_batch_size: default_stats_batch_size(),
+        }
+    }
+}
+
 /// 服务器配置文件格式
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -44,6 +83,8 @@ pub struct Config {
     pub users: Vec<UserConfig>,
     #[serde(default)]
     pub monitoring: MonitoringConfig,
+    #[serde(default)]
+    pub performance: PerformanceConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +140,7 @@ impl Config {
                 }
             ],
             monitoring: MonitoringConfig::default(),
+            performance: PerformanceConfig::default(),
         }
     }
 }

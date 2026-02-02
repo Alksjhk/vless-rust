@@ -52,7 +52,7 @@ Accept: application/json
 | memory_usage | string | 内存使用量，自动格式化 | "45.2 MB" |
 | total_memory | string | 总内存容量，自动格式化 | "16.0 GB" |
 | active_connections | number | 当前活动连接数 | 12 |
-| max_connections | number | 最大连接数 | 100 |
+| max_connections | number | 最大连接数 | 300 |
 
 #### 错误响应
 
@@ -125,9 +125,9 @@ Accept: application/json
 {
   "speed_history_duration": 60,
   "broadcast_interval": 1,
-  "websocket_max_connections": 100,
+  "websocket_max_connections": 300,
   "websocket_heartbeat_timeout": 60,
-  "vless_max_connections": 100
+  "vless_max_connections": 300
 }
 ```
 
@@ -137,11 +137,48 @@ Accept: application/json
 |------|------|------|--------|
 | speed_history_duration | number | 流量历史保留时长（秒） | 60 |
 | broadcast_interval | number | WebSocket广播间隔（秒） | 1 |
-| websocket_max_connections | number | WebSocket最大连接数 | 100 |
+| websocket_max_connections | number | WebSocket最大连接数 | 300 |
 | websocket_heartbeat_timeout | number | WebSocket心跳超时（秒） | 60 |
-| vless_max_connections | number | VLESS最大连接数 | 100 |
+| vless_max_connections | number | VLESS最大连接数 | 300 |
 
-### 4. WebSocket 实时推送
+### 4. 获取性能配置
+
+获取服务器的性能优化配置参数。
+
+#### 请求
+
+```http
+GET /api/performance HTTP/1.1
+Host: your-server-ip:port
+Accept: application/json
+```
+
+#### 响应
+
+**状态码**: 200 OK
+
+**响应体**:
+```json
+{
+  "buffer_size": 131072,
+  "tcp_nodelay": true,
+  "tcp_recv_buffer": 262144,
+  "tcp_send_buffer": 262144,
+  "stats_batch_size": 65536
+}
+```
+
+#### 字段说明
+
+| 字段 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| buffer_size | number | 传输缓冲区大小（字节） | 131072 (128KB) |
+| tcp_nodelay | boolean | 是否启用TCP_NODELAY | true |
+| tcp_recv_buffer | number | TCP接收缓冲区大小（字节） | 262144 (256KB) |
+| tcp_send_buffer | number | TCP发送缓冲区大小（字节） | 262144 (256KB) |
+| stats_batch_size | number | 流量统计批量大小（字节） | 65536 (64KB) |
+
+### 5. WebSocket 实时推送
 
 建立 WebSocket 连接接收实时监控数据推送。
 
@@ -179,7 +216,7 @@ const ws = new WebSocket('ws://your-server-ip:port/api/ws');
     "memory_usage": "45.2 MB",
     "total_memory": "16.0 GB",
     "active_connections": 12,
-    "max_connections": 100
+    "max_connections": 300
   }
 }
 ```
@@ -211,7 +248,7 @@ const ws = new WebSocket('ws://your-server-ip:port/api/ws');
 
 #### 连接管理
 
-- 最大并发连接数：100
+- 最大并发连接数：300
 - 心跳超时：60秒
 - 支持 Origin 验证（通过 `VLESS_MONITOR_ORIGIN` 环境变量配置）
 
@@ -244,7 +281,7 @@ ws.onclose = () => {
 };
 ```
 
-### 5. 获取监控页面
+### 6. 获取监控页面
 
 获取监控页面的HTML内容，用于在浏览器中显示监控仪表盘。
 

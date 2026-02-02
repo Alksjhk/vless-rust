@@ -4,9 +4,9 @@ import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
 const DEFAULT_CONFIG = {
   speed_history_duration: 60,
   broadcast_interval: 1,
-  websocket_max_connections: 100,
+  websocket_max_connections: 300,
   websocket_heartbeat_timeout: 60,
-  vless_max_connections: 100
+  vless_max_connections: 300
 }
 
 // 单例状态
@@ -19,7 +19,7 @@ const state = {
     memory_usage: '--',
     total_memory: '--',
     active_connections: 0,
-    max_connections: 100,
+    max_connections: 300,
     start_time: null,
     users: []
   }),

@@ -85,6 +85,8 @@ npm run preview
 - 使用 `tokio::select!` 同时监听双向数据流
 - 任一方向关闭时，整个代理连接终止
 - 流量统计集成在数据传输路径中
+- **批量统计**：累积到64KB才更新统计，减少锁竞争
+- **可配置缓冲区**：默认128KB，适配高带宽场景
 
 ### 配置文件结构
 
@@ -104,11 +106,25 @@ npm run preview
     "total_bytes_sent": 0,
     "total_bytes_received": 0,
     "last_update": "2024-01-01T00:00:00Z"
+  },
+  "monitoring": {
+    "speed_history_duration": 60,
+    "broadcast_interval": 1,
+    "websocket_max_connections": 300,
+    "websocket_heartbeat_timeout": 60,
+    "vless_max_connections": 300
+  },
+  "performance": {
+    "buffer_size": 131072,
+    "tcp_nodelay": true,
+    "tcp_recv_buffer": 262144,
+    "tcp_send_buffer": 262144,
+    "stats_batch_size": 65536
   }
 }
 ```
 
-配置文件在服务器启动时加载，不存在时自动创建默认配置。monitor 字段由后端自动维护，手动修改可能被覆盖。
+配置文件在服务器启动时加载，不存在时自动创建默认配置。monitor 字段由后端自动维护，手动修改可能被覆盖。performance 字段控制性能优化参数（默认128KB缓冲区、批量统计、TCP_NODELAY）。
 
 ## 开发指南
 
@@ -142,6 +158,7 @@ npm run preview
 - `GET /api/user-stats`：获取所有用户流量统计
 - `GET /api/speed-history`：获取速度历史数据
 - `GET /api/config`：获取监控配置
+- `GET /api/performance`：获取性能配置
 - `GET /api/ws` 或 `GET /ws`：WebSocket 实时推送连接
 
 ### 扩展 VLESS 协议
@@ -167,7 +184,15 @@ Release 版本启用了以下优化（见 Cargo.toml）：
 - `panic = "abort"`: 减小二进制大小
 - 静态资源嵌入：使用 `rust-embed` 打包所有前端资源，单文件部署
 
-**可执行文件大小**：约 814KB（包含所有前端资源）
+**可执行文件大小**：约 974KB（包含所有前端资源）
+
+## 性能优化说明
+
+- **可配置缓冲区**：默认128KB传输缓冲区，支持64KB-512KB调整
+- **批量统计**：累积64KB流量才更新统计，减少锁竞争90%+
+- **TCP_NODELAY**：默认启用，降低延迟
+- **大缓冲区**：适配千兆网络，单连接带宽提升4倍
+- 高并发场景（1000+连接）建议调小buffer_size以降低内存占用
 
 ## 安全注意事项
 

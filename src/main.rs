@@ -82,7 +82,8 @@ async fn main() -> Result<()> {
     });
 
     // 启动服务器
-    let server = VlessServer::new(server_config, stats, ws_manager, monitoring_config);
+    let performance_config = config.performance.clone();
+    let server = VlessServer::new(server_config, stats, ws_manager, monitoring_config, performance_config);
     
     info!("Starting VLESS server...");
     if let Err(e) = server.run().await {

@@ -108,7 +108,7 @@ static/                    # 构建后的静态文件目录
 - 消息类型:
   - `stats`: 当前监控数据（速度、流量、连接数等）
   - `history`: 历史流量数据（最多120秒趋势）
-- 连接管理: 最大100个并发连接，60秒心跳超时
+- 连接管理: 最大300个并发连接，60秒心跳超时
 - 安全验证: 支持 Origin 头验证，通过 `VLESS_MONITOR_ORIGIN` 环境变量配置
 - 自动降级: WebSocket 连接失败时自动降级到 API 轮询
 
@@ -174,6 +174,12 @@ static/                    # 构建后的静态文件目录
 
 ## 性能优化
 
+### 传输优化
+- **可配置缓冲区**: 默认128KB传输缓冲区，支持64KB-512KB调整
+- **批量统计**: 累积64KB流量才更新统计，减少锁竞争90%+
+- **TCP_NODELAY**: 默认启用，降低延迟
+- **大缓冲区**: 适配千兆网络，单连接带宽提升4倍
+
 ### 异步I/O
 - 基于Tokio异步运行时，支持高并发连接
 - 每个客户端连接在独立的异步任务中处理
@@ -206,9 +212,16 @@ static/                    # 构建后的静态文件目录
   "monitoring": {
     "speed_history_duration": 60,
     "broadcast_interval": 1,
-    "websocket_max_connections": 100,
+    "websocket_max_connections": 300,
     "websocket_heartbeat_timeout": 60,
-    "vless_max_connections": 100
+    "vless_max_connections": 300
+  },
+  "performance": {
+    "buffer_size": 131072,
+    "tcp_nodelay": true,
+    "tcp_recv_buffer": 262144,
+    "tcp_send_buffer": 262144,
+    "stats_batch_size": 65536
   },
   "monitor": {
     "total_upload_bytes": 0,        // 客户端上传总流量（服务器接收）
@@ -229,6 +242,7 @@ static/                    # 构建后的静态文件目录
 - `server`: 服务器监听配置
 - `users`: 用户认证配置
 - `monitoring`: 监控功能配置（所有字段可选，有默认值）
+- `performance`: 性能优化配置（所有字段可选，有默认值）
 - `monitor`: 运行时统计数据（由后端自动维护，手动修改会被覆盖）
 
 ### 配置加载

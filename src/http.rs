@@ -1,5 +1,5 @@
 use crate::stats::SharedStats;
-use crate::config::MonitoringConfig;
+use crate::config::{MonitoringConfig, PerformanceConfig};
 use anyhow::{Result, anyhow};
 use rust_embed::RustEmbed;
 
@@ -70,6 +70,7 @@ pub async fn handle_http_request(
     request: &HttpRequest,
     stats: SharedStats,
     monitoring_config: MonitoringConfig,
+    performance_config: PerformanceConfig,
 ) -> Result<Vec<u8>> {
     match request.path.as_str() {
         "/" | "/index.html" => {
@@ -102,6 +103,10 @@ pub async fn handle_http_request(
         }
         "/api/config" => {
             let json = serde_json::to_string(&monitoring_config)?;
+            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+        }
+        "/api/performance" => {
+            let json = serde_json::to_string(&performance_config)?;
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
         }
         _ => {

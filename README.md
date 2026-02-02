@@ -172,15 +172,34 @@ npm run dev
 - `uuid`: 用户唯一标识符，必须是有效的UUID格式
 - `email`: 用户邮箱（可选，仅用于标识）
 
+### 监控配置
+
+- `speed_history_duration`: 速度历史保留时长（秒），默认60
+- `broadcast_interval`: WebSocket广播间隔（秒），默认1
+- `websocket_max_connections`: WebSocket最大连接数，默认300
+- `websocket_heartbeat_timeout`: WebSocket心跳超时（秒），默认60
+- `vless_max_connections`: VLESS最大连接数，默认300
+
+### 性能配置
+
+- `buffer_size`: 传输缓冲区大小（字节），默认131072（128KB）
+- `tcp_nodelay`: 是否启用TCP_NODELAY，默认true
+- `tcp_recv_buffer`: TCP接收缓冲区大小（字节），默认262144（256KB）
+- `tcp_send_buffer`: TCP发送缓冲区大小（字节），默认262144（256KB）
+- `stats_batch_size`: 流量统计批量大小（字节），默认65536（64KB）
+
 ## 性能特点
 
 - **异步处理**: 基于Tokio的异步运行时，支持高并发连接
 - **零拷贝**: 使用Bytes库进行高效的内存管理
 - **快速UUID验证**: 使用HashSet进行O(1)时间复杂度的用户验证
 - **连接复用**: 每个客户端连接在独立的异步任务中处理
-- **单文件部署**: 静态资源嵌入可执行文件，约934KB，无需额外依赖
+- **可配置缓冲区**: 默认128KB传输缓冲区，支持高带宽场景（千兆网络）
+- **批量统计**: 减少锁竞争，提升多连接并发性能
+- **TCP优化**: 默认启用TCP_NODELAY降低延迟
+- **单文件部署**: 静态资源嵌入可执行文件，约974KB，无需额外依赖
 - **静态链接**: Windows CRT 静态链接，零依赖运行，无需 VC++ 运行时库
-- **WebSocket广播**: 支持最大100个并发WebSocket连接，每秒推送更新
+- **WebSocket广播**: 支持最大300个并发WebSocket连接，每秒推送更新
 - **智能降级**: WebSocket连接失败时自动切换到API轮询模式
 
 ## 部署说明
