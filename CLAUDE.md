@@ -132,9 +132,17 @@ npm run preview
     // 处理逻辑
     let data = ...;
     let json = serde_json::to_string(&data)?;
-    Ok(create_http_response("application/json", &json))
+    Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
 }
 ```
+
+### API 端点列表
+
+- `GET /api/stats`：获取监控数据（包含用户统计数组）
+- `GET /api/user-stats`：获取所有用户流量统计
+- `GET /api/speed-history`：获取速度历史数据
+- `GET /api/config`：获取监控配置
+- `GET /api/ws` 或 `GET /ws`：WebSocket 实时推送连接
 
 ### 扩展 VLESS 协议
 

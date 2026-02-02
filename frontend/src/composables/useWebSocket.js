@@ -20,7 +20,8 @@ const state = {
     total_memory: '--',
     active_connections: 0,
     max_connections: 100,
-    start_time: null
+    start_time: null,
+    users: []
   }),
   loading: ref(true),
   error: ref(null),
@@ -33,7 +34,8 @@ const state = {
   isDataSynced: ref(false),
   useFallback: false,
   clients: 0,
-  config: null
+  config: null,
+  userStats: ref([])
 }
 
 const DATA_POINTS = 60
@@ -143,6 +145,11 @@ const formatBytes = (bytes) => {
 
 const updateStats = (data) => {
   state.stats.value = data
+
+  // 更新用户统计
+  if (data.users && Array.isArray(data.users)) {
+    state.userStats.value = data.users
+  }
 
   const uploadSpeed = parseSpeed(data.upload_speed)
   const downloadSpeed = parseSpeed(data.download_speed)
@@ -429,6 +436,7 @@ export function useWebSocket() {
     downloadPeak: state.downloadPeak,
     trafficHistory: state.trafficHistory,
     isDataSynced: state.isDataSynced,
+    userStats: state.userStats,
     reconnect,
     formatBytes,
     getUploadProgress,

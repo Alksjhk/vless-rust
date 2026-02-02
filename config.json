@@ -1,24 +1,25 @@
 {
+  "monitor": {
+    "last_update": "2026-02-02T07:49:19.323531600+00:00",
+    "total_download_bytes": 0,
+    "total_upload_bytes": 0,
+    "users": {}
+  },
+  "monitoring": {
+    "broadcast_interval": 1,
+    "speed_history_duration": 60,
+    "vless_max_connections": 100,
+    "websocket_heartbeat_timeout": 60,
+    "websocket_max_connections": 100
+  },
   "server": {
     "listen": "0.0.0.0",
     "port": 8443
   },
   "users": [
     {
-      "uuid": "615767da-4db9-4df7-9f12-d7d617fc1d96",
-      "email": "user1@example.com"
+      "email": "user1@example.com",
+      "uuid": "615767da-4db9-4df7-9f12-d7d617fc1d96"
     }
-  ],
-  "monitoring": {
-    "speed_history_duration": 60,
-    "broadcast_interval": 1,
-    "websocket_max_connections": 100,
-    "websocket_heartbeat_timeout": 60,
-    "vless_max_connections": 100
-  },
-  "monitor": {
-    "last_update": "2026-02-02T04:07:49.855870300+00:00",
-    "total_bytes_received": 0,
-    "total_bytes_sent": 0
-  }
+  ]
 }

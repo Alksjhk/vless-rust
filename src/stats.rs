@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use tokio::sync::Mutex;
 use chrono::Utc;
 use sysinfo::System;
@@ -17,6 +18,17 @@ pub struct MonitorData {
     pub total_memory: String,
     pub active_connections: usize,
     pub max_connections: usize,
+    pub users: Vec<UserMonitorData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMonitorData {
+    pub uuid: String,
+    pub email: Option<String>,
+    pub upload_speed: String,
+    pub download_speed: String,
+    pub total_traffic: String,
+    pub active_connections: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,25 +46,35 @@ pub struct SpeedHistoryResponse {
 
 #[derive(Debug, Clone)]
 struct SpeedSnapshot {
-    bytes_sent: u64,
-    bytes_received: u64,
+    upload_bytes: u64,
+    download_bytes: u64,
     timestamp: Instant,
     upload_speed: f64,
     download_speed: f64,
 }
 
+#[derive(Debug, Clone)]
+struct UserStats {
+    uuid: String,
+    email: Option<String>,
+    total_upload_bytes: u64,
+    total_download_bytes: u64,
+    active_connections: usize,
+}
+
 pub struct Stats {
-    total_bytes_sent: u64,
-    total_bytes_received: u64,
+    total_upload_bytes: u64,      // 客户端上传的总字节数
+    total_download_bytes: u64,    // 客户端下载的总字节数
     active_connections: usize,
     start_time: Instant,
     speed_history: Vec<SpeedSnapshot>,
     system: System,
     config_path: String,
     current_pid: u32,
-    last_sent_snapshot: Option<SpeedSnapshot>,
-    last_received_snapshot: Option<SpeedSnapshot>,
+    last_upload_snapshot: Option<SpeedSnapshot>,
+    last_download_snapshot: Option<SpeedSnapshot>,
     config: MonitoringConfig,
+    user_stats: std::collections::HashMap<String, UserStats>,
 }
 
 impl Stats {
@@ -64,38 +86,89 @@ impl Stats {
         let now = Instant::now();
 
         Self {
-            total_bytes_sent: 0,
-            total_bytes_received: 0,
+            total_upload_bytes: 0,
+            total_download_bytes: 0,
             active_connections: 0,
             start_time: now,
             speed_history: Vec::new(),
             system,
             config_path,
             current_pid,
-            last_sent_snapshot: Some(SpeedSnapshot {
-                bytes_sent: 0,
-                bytes_received: 0,
+            last_upload_snapshot: Some(SpeedSnapshot {
+                upload_bytes: 0,
+                download_bytes: 0,
                 timestamp: now,
                 upload_speed: 0.0,
                 download_speed: 0.0,
             }),
-            last_received_snapshot: Some(SpeedSnapshot {
-                bytes_sent: 0,
-                bytes_received: 0,
+            last_download_snapshot: Some(SpeedSnapshot {
+                upload_bytes: 0,
+                download_bytes: 0,
                 timestamp: now,
                 upload_speed: 0.0,
                 download_speed: 0.0,
             }),
             config: monitoring_config,
+            user_stats: HashMap::new(),
         }
     }
 
-    pub fn add_sent_bytes(&mut self, bytes: u64) {
-        self.total_bytes_sent += bytes;
+    pub fn add_upload_bytes(&mut self, bytes: u64) {
+        self.total_upload_bytes += bytes;
     }
 
-    pub fn add_received_bytes(&mut self, bytes: u64) {
-        self.total_bytes_received += bytes;
+    pub fn add_download_bytes(&mut self, bytes: u64) {
+        self.total_download_bytes += bytes;
+    }
+
+    pub fn add_user_upload_bytes(&mut self, uuid: &str, bytes: u64, email: Option<String>) {
+        let user_stats = self.user_stats.entry(uuid.to_string()).or_insert_with(|| UserStats {
+            uuid: uuid.to_string(),
+            email: email.clone(),
+            total_upload_bytes: 0,
+            total_download_bytes: 0,
+            active_connections: 0,
+        });
+        user_stats.total_upload_bytes += bytes;
+        if email.is_some() && user_stats.email.is_none() {
+            user_stats.email = email;
+        }
+    }
+
+    pub fn add_user_download_bytes(&mut self, uuid: &str, bytes: u64, email: Option<String>) {
+        let user_stats = self.user_stats.entry(uuid.to_string()).or_insert_with(|| UserStats {
+            uuid: uuid.to_string(),
+            email: email.clone(),
+            total_upload_bytes: 0,
+            total_download_bytes: 0,
+            active_connections: 0,
+        });
+        user_stats.total_download_bytes += bytes;
+        if email.is_some() && user_stats.email.is_none() {
+            user_stats.email = email;
+        }
+    }
+
+    pub fn increment_user_connection(&mut self, uuid: &str, email: Option<String>) {
+        let user_stats = self.user_stats.entry(uuid.to_string()).or_insert_with(|| UserStats {
+            uuid: uuid.to_string(),
+            email: email.clone(),
+            total_upload_bytes: 0,
+            total_download_bytes: 0,
+            active_connections: 0,
+        });
+        user_stats.active_connections += 1;
+        if email.is_some() && user_stats.email.is_none() {
+            user_stats.email = email;
+        }
+    }
+
+    pub fn decrement_user_connection(&mut self, uuid: &str) {
+        if let Some(user_stats) = self.user_stats.get_mut(uuid) {
+            if user_stats.active_connections > 0 {
+                user_stats.active_connections -= 1;
+            }
+        }
     }
 
     pub fn increment_connections(&mut self) {
@@ -130,36 +203,36 @@ impl Stats {
         self.system.refresh_memory();
         let now = Instant::now();
 
-        let (upload_speed, download_speed) = if let Some(last_snapshot) = self.last_sent_snapshot.take() {
+        let (upload_speed, download_speed) = if let Some(last_snapshot) = self.last_upload_snapshot.take() {
             let duration_secs = now.duration_since(last_snapshot.timestamp).as_secs_f64();
 
             if duration_secs < 0.1 {
-                self.last_sent_snapshot = Some(last_snapshot);
-                self.last_received_snapshot = Some(SpeedSnapshot {
-                    bytes_sent: self.total_bytes_sent,
-                    bytes_received: self.total_bytes_received,
+                self.last_upload_snapshot = Some(last_snapshot);
+                self.last_download_snapshot = Some(SpeedSnapshot {
+                    upload_bytes: self.total_upload_bytes,
+                    download_bytes: self.total_download_bytes,
                     timestamp: now,
                     upload_speed: 0.0,
                     download_speed: 0.0,
                 });
                 (0.0, 0.0)
             } else {
-                let sent_diff = self.total_bytes_sent.saturating_sub(last_snapshot.bytes_sent);
-                let received_diff = self.total_bytes_received.saturating_sub(last_snapshot.bytes_received);
+                let upload_diff = self.total_upload_bytes.saturating_sub(last_snapshot.upload_bytes);
+                let download_diff = self.total_download_bytes.saturating_sub(last_snapshot.download_bytes);
 
-                let upload_speed = (sent_diff as f64) / duration_secs;
-                let download_speed = (received_diff as f64) / duration_secs;
+                let upload_speed = (upload_diff as f64) / duration_secs;
+                let download_speed = (download_diff as f64) / duration_secs;
 
-                self.last_sent_snapshot = Some(SpeedSnapshot {
-                    bytes_sent: self.total_bytes_sent,
-                    bytes_received: self.total_bytes_received,
+                self.last_upload_snapshot = Some(SpeedSnapshot {
+                    upload_bytes: self.total_upload_bytes,
+                    download_bytes: self.total_download_bytes,
                     timestamp: now,
                     upload_speed,
                     download_speed,
                 });
-                self.last_received_snapshot = Some(SpeedSnapshot {
-                    bytes_sent: self.total_bytes_sent,
-                    bytes_received: self.total_bytes_received,
+                self.last_download_snapshot = Some(SpeedSnapshot {
+                    upload_bytes: self.total_upload_bytes,
+                    download_bytes: self.total_download_bytes,
                     timestamp: now,
                     upload_speed,
                     download_speed,
@@ -168,18 +241,18 @@ impl Stats {
             }
         } else {
             let snapshot = SpeedSnapshot {
-                bytes_sent: self.total_bytes_sent,
-                bytes_received: self.total_bytes_received,
+                upload_bytes: self.total_upload_bytes,
+                download_bytes: self.total_download_bytes,
                 timestamp: now,
                 upload_speed: 0.0,
                 download_speed: 0.0,
             };
-            self.last_sent_snapshot = Some(snapshot.clone());
-            self.last_received_snapshot = Some(snapshot);
+            self.last_upload_snapshot = Some(snapshot.clone());
+            self.last_download_snapshot = Some(snapshot);
             (0.0, 0.0)
         };
 
-        if let Some(last_snapshot) = &self.last_sent_snapshot {
+        if let Some(last_snapshot) = &self.last_upload_snapshot {
             self.speed_history.push(last_snapshot.clone());
             self.speed_history.retain(|s| now.duration_since(s.timestamp) < Duration::from_secs(self.config.speed_history_duration));
         }
@@ -203,10 +276,36 @@ impl Stats {
         }
     }
 
+    pub fn get_all_user_stats(&self) -> Vec<UserMonitorData> {
+        self.user_stats.values().map(|user| {
+            let total_traffic = user.total_upload_bytes + user.total_download_bytes;
+            UserMonitorData {
+                uuid: user.uuid.clone(),
+                email: user.email.clone(),
+                upload_speed: "0 B/s".to_string(),
+                download_speed: "0 B/s".to_string(),
+                total_traffic: format_bytes(total_traffic),
+                active_connections: user.active_connections,
+            }
+        }).collect()
+    }
+
     pub fn get_monitor_data(&mut self) -> MonitorData {
         let (upload_speed, download_speed) = self.calculate_speeds();
 
-        let total_bytes = self.total_bytes_sent + self.total_bytes_received;
+        let total_bytes = self.total_upload_bytes + self.total_download_bytes;
+
+        let users: Vec<UserMonitorData> = self.user_stats.values().map(|user| {
+            let total_traffic = user.total_upload_bytes + user.total_download_bytes;
+            UserMonitorData {
+                uuid: user.uuid.clone(),
+                email: user.email.clone(),
+                upload_speed: "0 B/s".to_string(),
+                download_speed: "0 B/s".to_string(),
+                total_traffic: format_bytes(total_traffic),
+                active_connections: user.active_connections,
+            }
+        }).collect();
 
         MonitorData {
             upload_speed: format_speed(upload_speed),
@@ -217,6 +316,7 @@ impl Stats {
             total_memory: format_bytes(self.get_total_memory()),
             active_connections: self.active_connections,
             max_connections: self.config.vless_max_connections,
+            users,
         }
     }
 
@@ -224,11 +324,17 @@ impl Stats {
         if let Ok(content) = std::fs::read_to_string(&self.config_path) {
             if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(monitor) = config.get("monitor") {
-                    if let Some(sent) = monitor.get("total_bytes_sent").and_then(|v| v.as_u64()) {
-                        self.total_bytes_sent = sent;
+                    if let Some(sent) = monitor.get("total_upload_bytes").and_then(|v| v.as_u64()) {
+                        self.total_upload_bytes = sent;
+                    } else if let Some(sent) = monitor.get("total_bytes_sent").and_then(|v| v.as_u64()) {
+                        // 兼容旧字段名
+                        self.total_upload_bytes = sent;
                     }
-                    if let Some(received) = monitor.get("total_bytes_received").and_then(|v| v.as_u64()) {
-                        self.total_bytes_received = received;
+                    if let Some(received) = monitor.get("total_download_bytes").and_then(|v| v.as_u64()) {
+                        self.total_download_bytes = received;
+                    } else if let Some(received) = monitor.get("total_bytes_received").and_then(|v| v.as_u64()) {
+                        // 兼容旧字段名
+                        self.total_download_bytes = received;
                     }
                 }
             }
@@ -242,15 +348,27 @@ impl Stats {
         } else {
             serde_json::json!({})
         };
-        
+
+        let users_data: serde_json::Map<String, serde_json::Value> = self.user_stats.iter().map(|(uuid, stats)| {
+            (
+                uuid.clone(),
+                serde_json::json!({
+                    "total_upload_bytes": stats.total_upload_bytes,
+                    "total_download_bytes": stats.total_download_bytes,
+                    "email": stats.email,
+                })
+            )
+        }).collect();
+
         let monitor = serde_json::json!({
-            "total_bytes_sent": self.total_bytes_sent,
-            "total_bytes_received": self.total_bytes_received,
-            "last_update": Utc::now().to_rfc3339()
+            "total_upload_bytes": self.total_upload_bytes,
+            "total_download_bytes": self.total_download_bytes,
+            "last_update": Utc::now().to_rfc3339(),
+            "users": serde_json::Value::from(users_data)
         });
-        
+
         config["monitor"] = monitor;
-        
+
         std::fs::write(&self.config_path, serde_json::to_string_pretty(&config)?)?;
         Ok(())
     }

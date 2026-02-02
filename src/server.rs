@@ -17,14 +17,17 @@ use uuid::Uuid;
 /// RAII guard for connection counting
 struct ConnectionGuard {
     stats: SharedStats,
+    uuid: String,
     released: Arc<AtomicBool>,
 }
 
 impl ConnectionGuard {
-    async fn new(stats: SharedStats) -> Self {
+    async fn new(stats: SharedStats, uuid: String) -> Self {
         stats.lock().await.increment_connections();
+        stats.lock().await.increment_user_connection(&uuid, None);
         Self {
             stats,
+            uuid,
             released: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -34,8 +37,10 @@ impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         if !self.released.load(Ordering::SeqCst) {
             let stats = self.stats.clone();
+            let uuid = self.uuid.clone();
             tokio::spawn(async move {
                 stats.lock().await.decrement_connections();
+                stats.lock().await.decrement_user_connection(&uuid);
             });
         }
     }
@@ -165,8 +170,10 @@ impl VlessServer {
 
         info!("Authenticated user {} from {}", request.uuid, client_addr);
 
+        let uuid_str = request.uuid.to_string();
+
         // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone()).await;
+        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone()).await;
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
@@ -192,11 +199,14 @@ impl VlessServer {
 
     /// 处理TCP代理
     async fn handle_tcp_proxy(
-        mut client_stream: TcpStream,
+        client_stream: TcpStream,
         request: VlessRequest,
         initial_data: Bytes,
         stats: SharedStats,
     ) -> Result<()> {
+        let uuid_str = request.uuid.to_string();
+        let email_opt = None;
+
         // 连接到目标服务器
         let target_addr = match &request.address {
             Address::Domain(domain) => {
@@ -214,43 +224,75 @@ impl VlessServer {
         let mut target_stream = TcpStream::connect(target_addr).await?;
 
         // 如果有初始数据，先发送给目标服务器并统计上传流量
-        if !initial_data.is_empty() {
-            let len = initial_data.len() as u64;
+        let initial_len = initial_data.len();
+        if initial_len > 0 {
             target_stream.write_all(&initial_data).await?;
-            stats.lock().await.add_sent_bytes(len);
+            stats.lock().await.add_upload_bytes(initial_len as u64);
+            stats.lock().await.add_user_upload_bytes(&uuid_str, initial_len as u64, email_opt.clone());
         }
 
-        info!("Established proxy connection: {} -> {}", 
+        info!("Established proxy connection: {} -> {}",
                client_stream.peer_addr()?, target_addr);
 
-        // 双向数据转发
-        let (mut client_read, mut client_write) = client_stream.split();
-        let (mut target_read, mut target_write) = target_stream.split();
+        // 分离读写
+        let (mut client_read, mut client_write) = client_stream.into_split();
+        let (mut target_read, mut target_write) = target_stream.into_split();
 
-        let stats_client_to_target = stats.clone();
-        let stats_target_to_client = stats.clone();
+        let stats_c2t = stats.clone();
+        let stats_t2c = stats.clone();
+        let uuid_c2t = uuid_str.clone();
+        let uuid_t2c = uuid_str.clone();
+        let email_c2t = email_opt.clone();
+        let email_t2c = email_opt;
 
-        // 等待任一方向的连接关闭
-        tokio::select! {
-            result = tokio::io::copy(&mut client_read, &mut target_write) => {
-                match result {
-                    Ok(bytes) => {
-                        debug!("Client to target: {} bytes transferred", bytes);
-                        stats_client_to_target.lock().await.add_sent_bytes(bytes);
+        // 客户端→目标（上传）任务
+        let upload_task = tokio::spawn(async move {
+            let mut buffer = vec![0u8; 8192];
+            let mut total = 0u64;
+            loop {
+                match client_read.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        total += n as u64;
+                        if target_write.write_all(&buffer[..n]).await.is_err() {
+                            break;
+                        }
                     }
-                    Err(e) => debug!("Client to target error: {}", e),
+                    Err(_) => break,
                 }
             }
-            result = tokio::io::copy(&mut target_read, &mut client_write) => {
-                match result {
-                    Ok(bytes) => {
-                        debug!("Target to client: {} bytes transferred", bytes);
-                        stats_target_to_client.lock().await.add_received_bytes(bytes);
+            if total > 0 {
+                stats_c2t.lock().await.add_upload_bytes(total);
+                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, total, email_c2t);
+            }
+            total
+        });
+
+        // 目标→客户端（下载）任务
+        let download_task = tokio::spawn(async move {
+            let mut buffer = vec![0u8; 8192];
+            let mut total = 0u64;
+            loop {
+                match target_read.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        total += n as u64;
+                        if client_write.write_all(&buffer[..n]).await.is_err() {
+                            break;
+                        }
                     }
-                    Err(e) => debug!("Target to client error: {}", e),
+                    Err(_) => break,
                 }
             }
-        }
+            if total > 0 {
+                stats_t2c.lock().await.add_download_bytes(total);
+                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, total, email_t2c);
+            }
+            total
+        });
+
+        // 等待两个任务完成
+        let _ = tokio::join!(upload_task, download_task);
 
         debug!("Proxy connection closed");
         Ok(())

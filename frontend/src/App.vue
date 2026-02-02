@@ -37,6 +37,9 @@
         <MemoryCard />
         <ConnectionsCard />
       </div>
+
+      <!-- 用户流量统计 -->
+      <UserStats />
     </main>
   </div>
 </template>
@@ -50,6 +53,7 @@ import TrafficCard from './components/TrafficCard.vue'
 import UptimeCard from './components/UptimeCard.vue'
 import MemoryCard from './components/MemoryCard.vue'
 import ConnectionsCard from './components/ConnectionsCard.vue'
+import UserStats from './components/UserStats.vue'
 import TrafficChart from './components/TrafficChart.vue'
 import { useWebSocket } from './composables/useWebSocket'
 
@@ -233,6 +237,10 @@ const statusText = computed(() => {
   grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
   margin-top: 1.5rem;
+}
+
+.user-stats-section {
+  margin-top: 2rem;
 }
 
 .loading-overlay {

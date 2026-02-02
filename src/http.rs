@@ -88,6 +88,12 @@ pub async fn handle_http_request(
             let json = serde_json::to_string(&monitor_data)?;
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
         }
+        "/api/user-stats" => {
+            let stats_guard = stats.lock().await;
+            let user_stats = stats_guard.get_all_user_stats();
+            let json = serde_json::to_string(&user_stats)?;
+            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+        }
         "/api/speed-history" => {
             let stats_guard = stats.lock().await;
             let history = stats_guard.get_speed_history_response();

@@ -119,6 +119,18 @@ static/                    # 构建后的静态文件目录
 - 总流量使用量：累计流量统计，每10分钟持久化
 - 内存占用：使用sysinfo库查询系统内存
 - 活动连接数：WebSocket连接建立时增加，关闭时减少
+- **用户级统计**：按UUID分组统计各用户流量和连接数
+
+#### 流量统计语义说明
+- **upload（上传）**：客户端发送的数据，即服务器从客户端接收的数据
+- **download（下载）**：客户端接收的数据，即服务器发送给客户端的数据
+- 方向定义：始终从客户端角度出发
+
+#### 用户流量统计
+- **数据结构**：`UserStats` 包含 UUID、邮箱、上传/下载流量、活动连接数
+- **统计方式**：在代理转发时按用户UUID分别统计
+- **持久化**：配置文件 `monitor.users` 字段存储各用户流量数据
+- **API接口**：`GET /api/user-stats` 获取所有用户流量统计
 
 #### 前端架构
 - **框架**: Vue 3 (Composition API)
@@ -127,6 +139,17 @@ static/                    # 构建后的静态文件目录
 - **组件化**: 模块化组件设计
 - **主题系统**: CSS变量实现深色/浅色主题
 - **响应式**: 适配Mobile/Tablet/Desktop
+- **组件列表**:
+  - `StatCard.vue`: 基础统计卡片
+  - `SpeedCard.vue`: 上传速度卡片
+  - `DownloadCard.vue`: 下载速度卡片
+  - `TrafficCard.vue`: 总流量卡片
+  - `UptimeCard.vue`: 运行时长卡片
+  - `MemoryCard.vue`: 内存使用卡片
+  - `ConnectionsCard.vue`: 活动连接卡片
+  - `TrafficChart.vue`: 流量趋势图（Canvas波形）
+  - `ThemeToggle.vue`: 主题切换按钮
+  - `UserStats.vue`: 用户流量统计表格（支持排序）
 
 ### 流量统计实现
 
@@ -188,9 +211,16 @@ static/                    # 构建后的静态文件目录
     "vless_max_connections": 100
   },
   "monitor": {
-    "total_bytes_sent": 0,
-    "total_bytes_received": 0,
-    "last_update": "2024-01-01T00:00:00Z"
+    "total_upload_bytes": 0,        // 客户端上传总流量（服务器接收）
+    "total_download_bytes": 0,      // 客户端下载总流量（服务器发送）
+    "last_update": "2024-01-01T00:00:00Z",
+    "users": {                       // 用户级流量统计
+      "uuid-string": {
+        "total_upload_bytes": 0,
+        "total_download_bytes": 0,
+        "email": "user@example.com"
+      }
+    }
   }
 }
 ```
