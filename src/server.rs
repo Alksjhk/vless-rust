@@ -5,7 +5,7 @@ use crate::ws::{self, SharedWsManager};
 use crate::config::{MonitoringConfig, PerformanceConfig};
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,9 +41,9 @@ struct ConnectionGuard {
 }
 
 impl ConnectionGuard {
-    async fn new(stats: SharedStats, uuid: String) -> Self {
+    async fn new(stats: SharedStats, uuid: String, email: Option<String>) -> Self {
         stats.lock().await.increment_connections();
-        stats.lock().await.increment_user_connection(&uuid, None);
+        stats.lock().await.increment_user_connection(&uuid, email);
         Self {
             stats,
             uuid,
@@ -70,6 +70,7 @@ impl Drop for ConnectionGuard {
 pub struct ServerConfig {
     pub bind_addr: SocketAddr,
     pub users: HashSet<Uuid>,
+    pub user_emails: HashMap<Uuid, Option<String>>,
 }
 
 impl ServerConfig {
@@ -77,11 +78,17 @@ impl ServerConfig {
         Self {
             bind_addr,
             users: HashSet::new(),
+            user_emails: HashMap::new(),
         }
     }
 
-    pub fn add_user(&mut self, uuid: Uuid) {
+    pub fn add_user_with_email(&mut self, uuid: Uuid, email: Option<String>) {
         self.users.insert(uuid);
+        self.user_emails.insert(uuid, email);
+    }
+
+    pub fn get_user_email(&self, uuid: &Uuid) -> Option<String> {
+        self.user_emails.get(uuid).and_then(|e| e.clone())
     }
 }
 
@@ -216,9 +223,10 @@ impl VlessServer {
         info!("Authenticated user {} from {}", request.uuid, client_addr);
 
         let uuid_str = request.uuid.to_string();
+        let user_email = config.get_user_email(&request.uuid);
 
         // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone()).await;
+        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email).await;
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
@@ -227,7 +235,8 @@ impl VlessServer {
         // 根据命令类型处理连接
         let result = match request.command {
             Command::Tcp => {
-                Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config).await
+                let user_email = config.get_user_email(&request.uuid);
+                Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email).await
             }
             Command::Udp => {
                 warn!("UDP command not implemented yet");
@@ -249,9 +258,10 @@ impl VlessServer {
         initial_data: Bytes,
         stats: SharedStats,
         perf_config: PerformanceConfig,
+        user_email: Option<String>,
     ) -> Result<()> {
         let uuid_str = request.uuid.to_string();
-        let email_opt = None;
+        let email_opt = user_email;
 
         // 连接到目标服务器
         let target_addr = match &request.address {

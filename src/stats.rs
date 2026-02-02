@@ -323,6 +323,7 @@ impl Stats {
     pub fn load_from_config(&mut self) -> anyhow::Result<()> {
         if let Ok(content) = std::fs::read_to_string(&self.config_path) {
             if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                // 加载总流量统计
                 if let Some(monitor) = config.get("monitor") {
                     if let Some(sent) = monitor.get("total_upload_bytes").and_then(|v| v.as_u64()) {
                         self.total_upload_bytes = sent;
@@ -335,6 +336,36 @@ impl Stats {
                     } else if let Some(received) = monitor.get("total_bytes_received").and_then(|v| v.as_u64()) {
                         // 兼容旧字段名
                         self.total_download_bytes = received;
+                    }
+
+                    // 加载用户流量统计
+                    if let Some(users) = monitor.get("users").and_then(|v| v.as_object()) {
+                        for (uuid_str, user_data) in users {
+                            if let Some(user_obj) = user_data.as_object() {
+                                let upload = user_obj.get("total_upload_bytes")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let download = user_obj.get("total_download_bytes")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let email = user_obj.get("email")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                let user_stats = self.user_stats.entry(uuid_str.clone()).or_insert_with(|| UserStats {
+                                    uuid: uuid_str.clone(),
+                                    email: email.clone(),
+                                    total_upload_bytes: 0,
+                                    total_download_bytes: 0,
+                                    active_connections: 0,
+                                });
+                                user_stats.total_upload_bytes = upload;
+                                user_stats.total_download_bytes = download;
+                                if email.is_some() && user_stats.email.is_none() {
+                                    user_stats.email = email;
+                                }
+                            }
+                        }
                     }
                 }
             }

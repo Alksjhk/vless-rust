@@ -46,12 +46,16 @@ async fn main() -> Result<()> {
 
     // 创建服务器配置
     let bind_addr = config.bind_addr()?;
+
+    // 添加用户及邮箱信息
     let mut server_config = ServerConfig::new(bind_addr);
-    
-    // 添加用户
-    for uuid in config.user_uuids()? {
-        server_config.add_user(uuid);
-        info!("  Added user: {}", uuid);
+
+    for user in &config.users {
+        if let Ok(uuid) = uuid::Uuid::parse_str(&user.uuid) {
+            let email = user.email.clone();
+            server_config.add_user_with_email(uuid, email.clone());
+            info!("  Added user: {} ({})", uuid, email.as_deref().unwrap_or("no email"));
+        }
     }
 
     // 创建统计模块

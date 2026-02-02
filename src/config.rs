@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::net::SocketAddr;
 use uuid::Uuid;
 use anyhow::Result;
@@ -114,16 +113,6 @@ impl Config {
     pub fn bind_addr(&self) -> Result<SocketAddr> {
         let addr_str = format!("{}:{}", self.server.listen, self.server.port);
         Ok(addr_str.parse()?)
-    }
-
-    /// 获取用户UUID集合
-    pub fn user_uuids(&self) -> Result<HashSet<Uuid>> {
-        let mut uuids = HashSet::new();
-        for user in &self.users {
-            let uuid = Uuid::parse_str(&user.uuid)?;
-            uuids.insert(uuid);
-        }
-        Ok(uuids)
     }
 
     /// 创建默认配置
