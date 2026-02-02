@@ -1,2 +1,16 @@
 /target
 Cargo.lock
+
+# Frontend
+frontend/node_modules
+frontend/dist
+static
+frontend/.DS_Store
+
+plan.md
+.vscode
+
+.claude
+.trea
+.opencode
+

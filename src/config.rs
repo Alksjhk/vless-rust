@@ -4,11 +4,46 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use anyhow::Result;
 
+/// 监控配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MonitoringConfig {
+    #[serde(default = "default_history_duration")]
+    pub speed_history_duration: u64,
+    #[serde(default = "default_broadcast_interval")]
+    pub broadcast_interval: u64,
+    #[serde(default = "default_ws_max_connections")]
+    pub websocket_max_connections: usize,
+    #[serde(default = "default_ws_heartbeat_timeout")]
+    pub websocket_heartbeat_timeout: u64,
+    #[serde(default = "default_vless_max_connections")]
+    pub vless_max_connections: usize,
+}
+
+fn default_history_duration() -> u64 { 60 }
+fn default_broadcast_interval() -> u64 { 1 }
+fn default_ws_max_connections() -> usize { 100 }
+fn default_ws_heartbeat_timeout() -> u64 { 60 }
+fn default_vless_max_connections() -> usize { 100 }
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            speed_history_duration: default_history_duration(),
+            broadcast_interval: default_broadcast_interval(),
+            websocket_max_connections: default_ws_max_connections(),
+            websocket_heartbeat_timeout: default_ws_heartbeat_timeout(),
+            vless_max_connections: default_vless_max_connections(),
+        }
+    }
+}
+
 /// 服务器配置文件格式
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerSettings,
     pub users: Vec<UserConfig>,
+    #[serde(default)]
+    pub monitoring: MonitoringConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +98,7 @@ impl Config {
                     email: Some("user@example.com".to_string()),
                 }
             ],
+            monitoring: MonitoringConfig::default(),
         }
     }
 }

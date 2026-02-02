@@ -1,13 +1,19 @@
 mod protocol;
 mod server;
 mod config;
+mod stats;
+mod http;
+mod ws;
 
 use anyhow::Result;
 use config::Config;
 use server::{ServerConfig, VlessServer};
+use stats::{Stats, start_stats_persistence};
+use ws::WebSocketManager;
 use std::env;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{info, error};
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -48,8 +54,35 @@ async fn main() -> Result<()> {
         info!("  Added user: {}", uuid);
     }
 
+    // 创建统计模块
+    let config_path = config_path.clone();
+    let monitoring_config = config.monitoring.clone();
+    let stats = Arc::new(Mutex::new(Stats::new(config_path.clone(), monitoring_config.clone())));
+
+    // 从配置文件加载统计数据
+    if let Err(e) = stats.lock().await.load_from_config() {
+        info!("No existing stats found: {}", e);
+    }
+
+    // 创建 WebSocket 管理器
+    let ws_manager = Arc::new(RwLock::new(WebSocketManager::new(monitoring_config.clone())));
+    let ws_manager_clone = Arc::clone(&ws_manager);
+    let stats_clone = Arc::clone(&stats);
+    let monitoring_config_clone = monitoring_config.clone();
+
+    // 启动 WebSocket 广播任务
+    tokio::spawn(async move {
+        ws::start_broadcasting_task(ws_manager_clone, stats_clone, monitoring_config_clone).await;
+    });
+
+    // 启动统计持久化任务
+    let stats_persistence = Arc::clone(&stats);
+    tokio::spawn(async move {
+        start_stats_persistence(stats_persistence, config_path).await;
+    });
+
     // 启动服务器
-    let server = VlessServer::new(server_config);
+    let server = VlessServer::new(server_config, stats, ws_manager, monitoring_config);
     
     info!("Starting VLESS server...");
     if let Err(e) = server.run().await {
