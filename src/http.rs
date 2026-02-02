@@ -5,6 +5,8 @@ use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
+#[exclude = "*.DS_Store"]
+#[exclude = "*.map"]
 struct Asset;
 
 #[derive(Debug, Clone)]

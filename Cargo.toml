@@ -27,7 +27,7 @@ futures-channel = "0.3"
 futures-util = "0.3"
 base64 = "0.21"
 sha1 = "0.10"
-rust-embed = "8.0"
+rust-embed = { version = "8.0", features = ["include-exclude"] }
 
 [build-dependencies]
 prost-build = "0.12"
