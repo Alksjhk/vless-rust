@@ -28,6 +28,12 @@ futures-util = "0.3"
 base64 = "0.21"
 sha1 = "0.10"
 rust-embed = { version = "8.0", features = ["include-exclude"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2.0"
+rustls = "0.23"
+async-trait = "0.1"
+rcgen = "0.14"
+time = "0.3"
 
 [build-dependencies]
 prost-build = "0.12"

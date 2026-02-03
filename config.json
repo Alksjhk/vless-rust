@@ -1,6 +1,6 @@
 {
   "monitor": {
-    "last_update": "2026-01-01T00:00:00.000000000+00:00",
+    "last_update": "2026-02-03T09:02:47.561549800+00:00",
     "total_download_bytes": 0,
     "total_upload_bytes": 0,
     "users": {}
@@ -17,16 +17,25 @@
     "stats_batch_size": 65536,
     "tcp_nodelay": true,
     "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144
+    "tcp_send_buffer": 262144,
+    "udp_recv_buffer": 65536,
+    "udp_timeout": 30
   },
   "server": {
     "listen": "0.0.0.0",
     "port": 8443
   },
+  "tls": {
+    "cert_file": "certs/server.crt",
+    "enabled": true,
+    "key_file": "certs/server.key",
+    "server_name": "myserver.com"
+  },
   "users": [
     {
-      "email": "user1@example.com",
-      "uuid": "615767da-4db9-4df7-9f12-d7d617fc1d96"
+      "email": "user@myserver.com",
+      "uuid": "cf2e0844-f2c9-40db-8140-c9329cb8a9f0"
     }
-  ]
+  ],
+  "vless_url": "vless://cf2e0844-f2c9-40db-8140-c9329cb8a9f0@127.0.0.1:8443?security=tls&encryption=none&flow=&sni=myserver.com&alpn=h2,http/1.1&type=tcp#user@myserver.com"
 }

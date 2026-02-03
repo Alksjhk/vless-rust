@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use uuid::Uuid;
 use anyhow::Result;
 
 /// 监控配置
@@ -85,6 +84,38 @@ impl Default for PerformanceConfig {
     }
 }
 
+/// TLS 配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TlsConfig {
+    /// 是否启用 TLS
+    #[serde(default)]
+    pub enabled: bool,
+    /// 证书文件路径
+    #[serde(default = "default_cert_file")]
+    pub cert_file: String,
+    /// 私钥文件路径
+    #[serde(default = "default_key_file")]
+    pub key_file: String,
+    /// 服务器名称（用于 SNI 和证书生成）
+    #[serde(default = "default_server_name")]
+    pub server_name: String,
+}
+
+fn default_cert_file() -> String { "certs/server.crt".to_string() }
+fn default_key_file() -> String { "certs/server.key".to_string() }
+fn default_server_name() -> String { "localhost".to_string() }
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_file: default_cert_file(),
+            key_file: default_key_file(),
+            server_name: default_server_name(),
+        }
+    }
+}
+
 /// 服务器配置文件格式
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -94,6 +125,11 @@ pub struct Config {
     pub monitoring: MonitoringConfig,
     #[serde(default)]
     pub performance: PerformanceConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// VLESS 连接 URL（自动生成，供客户端直接复制使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vless_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -125,12 +161,64 @@ impl Config {
         Ok(addr_str.parse()?)
     }
 
-    /// 创建默认配置
-    pub fn default() -> Self {
-        Self {
+    /// 生成 VLESS 连接 URL
+    ///
+    /// 格式: vless://uuid@server:port?security=none|tls&type=tcp&encryption=none&flow=&sni=server&alpn=h2,http/1.1#email
+    ///
+    /// 注意: v2rayN 不支持在 URL 中直接设置 allowInsecure
+    /// 导入后需要在设置中手动勾选"允许不安全"选项
+    pub fn generate_vless_url(&self) -> String {
+        if self.users.is_empty() {
+            return String::new();
+        }
+
+        let user = &self.users[0];
+        let uuid = &user.uuid;
+
+        // 将 0.0.0.0 替换为 127.0.0.1，v2rayN 不支持 0.0.0.0
+        let host = if self.server.listen == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            self.server.listen.as_str()
+        };
+
+        let port = self.server.port;
+
+        // 安全类型：none 或 tls
+        let security = if self.tls.enabled { "tls" } else { "none" };
+
+        // TLS 参数（v2rayN 兼容格式，移除 allowInsecure）
+        let tls_params = if self.tls.enabled {
+            // v2rayN 需要标准的参数顺序和名称
+            // allowInsecure 需要导入后在客户端手动设置
+            format!("&encryption=none&flow=&sni={}&alpn=h2,http/1.1", self.tls.server_name)
+        } else {
+            "&encryption=none&flow=".to_string()
+        };
+
+        // 邮箱备注（用于客户端显示）
+        let remarks = user.email.as_deref()
+            .unwrap_or("vless-rust")
+            .replace(" ", "%20");
+
+        format!(
+            "vless://{}@{}:{}?security={}{}&type=tcp#{}",
+            uuid, host, port, security, tls_params, remarks
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
             server: ServerSettings {
                 listen: "0.0.0.0".to_string(),
-                port: 443,
+                port: 8443,
             },
             users: vec![
                 UserConfig {
@@ -140,17 +228,9 @@ impl Config {
             ],
             monitoring: MonitoringConfig::default(),
             performance: PerformanceConfig::default(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_serialization() {
-        let config = Config::default();
+            tls: TlsConfig::default(),
+            vless_url: None,
+        };
         let json = config.to_json().unwrap();
         let parsed = Config::from_json(&json).unwrap();
 

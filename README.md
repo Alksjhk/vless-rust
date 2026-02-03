@@ -7,6 +7,7 @@
 - 完整的VLESS协议支持（版本0和版本1）
 - 异步I/O处理（基于Tokio）
 - TCP代理转发
+- UDP协议支持（UDP over TCP机制）
 - 多用户UUID认证
 - 配置文件支持
 - 结构化日志记录
@@ -18,7 +19,7 @@
 - **自动降级机制**，WebSocket失败时切换到API轮询
 - 流量统计持久化（每10分钟自动保存）
 - 单文件部署（静态资源嵌入可执行文件）
-- 计划中：UDP支持、Mux多路复用、XTLS支持
+- **VLESS over TLS**：支持TLS加密传输（自签名证书）
 
 ## VLESS协议实现
 
@@ -43,7 +44,7 @@
 
 ### 支持的命令类型
 - `0x01`: TCP连接
-- `0x02`: UDP连接（计划支持）
+- `0x02`: UDP连接（已支持）
 - `0x03`: Mux多路复用（计划支持）
 
 ### 支持的地址类型
@@ -187,6 +188,68 @@ npm run dev
 - `tcp_recv_buffer`: TCP接收缓冲区大小（字节），默认262144（256KB）
 - `tcp_send_buffer`: TCP发送缓冲区大小（字节），默认262144（256KB）
 - `stats_batch_size`: 流量统计批量大小（字节），默认65536（64KB）
+- `udp_timeout`: UDP会话超时时间（秒），默认30
+- `udp_recv_buffer`: UDP接收缓冲区大小（字节），默认65536（64KB）
+
+### TLS 配置
+
+TLS 加密支持用于保护 VLESS 协议传输。自签名证书适用于客户端可配置跳过证书验证的场景。
+
+- `enabled`: 是否启用 TLS，默认 false
+- `cert_file`: 证书文件路径，默认 "certs/server.crt"
+- `key_file`: 私钥文件路径，默认 "certs/server.key"
+- `server_name`: 服务器名称（用于 SNI，可选）
+
+#### 配置示例
+
+```json
+{
+  "server": {
+    "listen": "0.0.0.0",
+    "port": 8443
+  },
+  "users": [...],
+  "tls": {
+    "enabled": true,
+    "cert_file": "certs/server.crt",
+    "key_file": "certs/server.key"
+  }
+}
+```
+
+#### 客户端配置
+
+VLESS over TLS 需要客户端配置 TLS 设置（以 xray/v2ray 为例）：
+
+```json
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "YOUR_SERVER_IP",
+      "port": 8443,
+      "users": [{
+        "id": "YOUR_UUID",
+        "encryption": "none"
+      }]
+    }]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "YOUR_SERVER_IP",
+      "allowInsecure": true
+    }
+  }
+}
+```
+
+**重要**：
+- **自签名证书需要设置 `allowInsecure: true` 或 `skipCertVerify: true`**
+- `serverName` 可设置为服务器 IP 地址
+- 监控页面仍使用 HTTP 访问（`http://IP:端口/`）
+- 仅 VLESS 协议使用 TLS 加密
 
 ## 性能特点
 
@@ -219,13 +282,17 @@ npm run dev
 ## 安全注意事项
 
 1. **UUID保密**: 确保用户UUID不被泄露，这是唯一的认证凭据
-2. **传输加密**: 建议在生产环境中配合TLS使用
+2. **传输加密**: 建议在生产环境中使用 VLESS over TLS 加密传输
 3. **访问控制**: 合理配置防火墙规则
 4. **日志管理**: 注意日志中可能包含敏感信息
 5. **WebSocket安全**: 生产环境建议设置 `VLESS_MONITOR_ORIGIN` 环境变量限制访问来源
    ```bash
    export VLESS_MONITOR_ORIGIN="https://your-domain.com"
    ```
+6. **证书管理**:
+   - 私钥文件权限应设置为仅所有者可读写（`chmod 600 certs/server.key`）
+   - 定期更新证书（自签名证书默认有效期365天）
+   - 生产环境建议使用正规CA签发的证书
 
 ## 协议参考
 

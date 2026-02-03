@@ -12,6 +12,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **协议**: VLESS (版本 0 和版本 1)
 - **序列化**: serde + serde_json
 - **WebSocket**: tokio-tungstenite
+- **TLS**: tokio-rustls + rustls-pemfile
 - **日志**: tracing + tracing-subscriber
 - **静态资源嵌入**: rust-embed
 - **系统信息**: sysinfo
@@ -39,36 +40,44 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
                      │
                      ▼
         ┌────────────────────────┐
-        │  协议检测层             │
-        │  is_http_request()     │
+        │  协议检测层 (peek)      │
+        │  首字节: 0x16/HTTP/VLESS │
         └────────┬───────────────┘
                  │
-        ┌────────┴────────┐
-        │                 │
-        ▼                 ▼
-┌──────────────┐  ┌──────────────┐
-│ HTTP 请求    │  │ VLESS 请求   │
-│              │  │              │
-├──────────────┤  ├──────────────┤
-│ 静态文件     │  │ UUID 验证    │
-│ API 端点     │  │ 命令处理     │
-│ WebSocket    │  │ TCP 代理     │
-└──────────────┘  └──────────────┘
-        │                 │
-        └────────┬────────┘
-                 ▼
-        ┌──────────────────┐
-        │   统计模块       │
-        │   (Stats)        │
-        └──────────────────┘
-                 │
-        ┌────────┴────────┐
-        │                 │
-        ▼                 ▼
-┌──────────────┐  ┌──────────────┐
-│ 持久化存储   │  │ 广播推送     │
-│ 配置文件     │  │ WebSocket    │
-└──────────────┘  └──────────────┘
+       ┌─────────┼─────────┐
+       │         │         │
+       ▼         ▼         ▼
+┌──────────┐ ┌──────┐ ┌──────────┐
+│   TLS    │ │ HTTP │ │  VLESS   │
+│ 0x16     │ │ GET  │ │ 0x00/01  │
+└─────┬────┘ └───┬──┘ └─────┬────┘
+      │          │          │
+      ▼          │          ▼
+┌──────────┐     │    ┌──────────┐
+│ TLS 握手 │     │    │ UUID 验证│
+│ 解密     │     │    │ 命令处理 │
+└─────┬────┘     │    └─────┬────┘
+      │          │          │
+      └────┬─────┘          │
+           ▼                ▼
+    ┌──────────────┐  ┌──────────────┐
+    │ 监控页面/API │  │ TCP/UDP 代理 │
+    └──────────────┘  └──────────────┘
+           │                │
+           └────────┬───────┘
+                    ▼
+           ┌──────────────────┐
+           │   统计模块       │
+           │   (Stats)        │
+           └──────────────────┘
+                    │
+           ┌────────┴────────┐
+           │                 │
+           ▼                 ▼
+    ┌──────────────┐  ┌──────────────┐
+    │ 持久化存储   │  │ 广播推送     │
+    │ 配置文件     │  │ WebSocket    │
+    └──────────────┘  └──────────────┘
 ```
 
 
@@ -79,12 +88,14 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
 | `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器 |
-| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
+| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig`、`TlsConfig`、`generate_vless_url()` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
 | `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
+| `src/tls.rs` | TLS 配置、证书生成和握手 | `load_tls_config()`、`generate_cert_in_memory()`、`load_tls_config_from_bytes()`、`accept_tls()` |
+| `src/wizard.rs` | 初始化配置向导 | `run_init_wizard()` - 交互式配置 |
 
 ### 前端核心文件
 
@@ -144,6 +155,11 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **前端统计卡片** → `frontend/src/components/*.vue`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
+- **TLS 配置** → `config.json` - `tls` 节点
+- **TLS 模块** → `src/tls.rs`
+- **初始化向导** → `src/wizard.rs` - `run_init_wizard()`
+- **VLESS URL 生成** → `src/config.rs:generate_vless_url()`
+- **协议检测** → `src/server.rs:handle_connection()`
 
 ### 核心模块
 
@@ -289,7 +305,72 @@ X-XSS-Protection: 1; mode=block
 }
 ```
 
-#### 6. 配置模块 (config.rs)
+#### 7. TLS 模块 (tls.rs)
+
+**职责**: TLS 配置加载、证书自动生成和握手处理
+
+**TLS 配置**:
+- `enabled`: 是否启用 TLS
+- `cert_file`: 证书文件路径
+- `key_file`: 私钥文件路径
+- `server_name`: 服务器名称（用于 SNI 和证书生成）
+
+**证书生成**:
+- `ensure_cert_exists()`: 确保证书文件存在，不存在则自动生成
+- `generate_self_signed_cert()`: 生成自签名证书到文件
+- 证书有效期：**10 年（3650 天）**
+- 自动包含多个 SAN：
+  - 配置的 `server_name`
+  - `localhost`
+  - `*.local`（通配符域名）
+  - `127.0.0.1`（IPv4 回环）
+  - `::1`（IPv6 回环）
+- 证书文件持久化保存，程序重启不会重新生成（除非文件被删除）
+
+**自签名证书与客户端信任**:
+- 自动生成的证书为自签名证书，客户端默认不信任
+- VLESS URL 自动包含 `allowInsecure=true` 参数，允许客户端跳过证书验证
+- 同时包含 `sni=<server_name>` 参数，用于 TLS 握手时的服务器名称指示
+- 如果使用受信任的 CA 签发证书，可手动移除 URL 中的 `allowInsecure` 参数
+
+**握手流程**:
+```rust
+// TLS 握手
+let tls_stream = TlsStream::new(server_connection, tcp_stream);
+
+// 握手后的数据流可以像普通 TcpStream 一样读写
+let n = tls_stream.read(&mut buffer).await?;
+```
+
+**协议检测机制**:
+
+通过检测 TCP 连接的首字节来区分不同协议：
+
+| 首字节 | 协议 | 处理方式 |
+|--------|------|----------|
+| `0x16` | TLS Handshake | TLS 解密 → VLESS 解码 |
+| `GET`/`POST` 等 | HTTP | 直接处理（监控页面） |
+| `0x00`/`0x01` | VLESS | 直接解码（明文） |
+
+**实现原理**:
+```rust
+// 使用 peek() 读取首字节而不消费数据
+stream.peek(&mut peek_buf).await?;
+
+if peek_buf[0] == 0x16 {
+    // TLS Handshake
+    let tls_stream = tls::accept_tls(stream, tls_config).await?;
+    // 处理解密后的数据
+} else {
+    // 明文连接
+}
+```
+
+**混合模式支持**:
+- 单个端口同时支持 TLS-VLESS 和 Plain-HTTP
+- TLS 连接用于 VLESS 加密传输
+- 明文 HTTP 用于监控页面访问
+- 自动协议检测，无需额外配置
 
 **职责**: 配置文件解析和验证
 
@@ -298,11 +379,39 @@ X-XSS-Protection: 1; mode=block
 - `users`: 用户 UUID 列表
 - `monitoring`: 监控参数配置
 - `performance`: 性能优化配置
+- `tls`: TLS 加密配置（可选）
+- `vless_url`: VLESS 连接 URL（自动生成，供客户端使用）
 
 **默认值策略**:
 - 使用 serde 默认值
-- 配置文件不存在时自动创建
+- 配置文件不存在时启动初始化向导
 - 支持部分配置缺失
+
+#### 8. 初始化向导模块 (wizard.rs)
+
+**职责**: 首次运行时的交互式配置向导
+
+**配置步骤**:
+1. **端口配置**: 设置监听端口（默认 8443）
+2. **UUID 配置**: 自动生成或手动输入 UUID
+3. **TLS 配置**:
+   - 启用/禁用 TLS
+   - 设置服务器域名/SNI（默认 localhost）
+   - 启用时自动生成自签名证书
+
+**证书自动生成**:
+- 调用 `tls::ensure_cert_exists()` 确保证书文件存在
+- 证书保存到 `certs/server.crt` 和 `certs/server.key`
+- 主程序启动时也会检查并自动生成
+- 证书有效期 10 年，包含完整的 SAN 配置
+- 证书文件持久保存，避免重复生成
+
+**VLESS URL 生成**:
+- 格式: `vless://uuid@server:port?security=none|tls&sni=server&allowInsecure=true&type=tcp#email`
+- TLS 模式自动添加 `allowInsecure=true` 参数（自签名证书需要）
+- 自动根据配置生成
+- 启动时打印到控制台
+- 保存到配置文件供客户端使用
 
 ### 前端架构
 

@@ -127,7 +127,25 @@ npm run preview
 }
 ```
 
-配置文件在服务器启动时加载，不存在时自动创建默认配置。monitor 字段由后端自动维护，手动修改可能被覆盖。performance 字段控制性能优化参数（默认128KB缓冲区、批量统计、TCP_NODELAY、UDP超时）。
+配置文件在服务器启动时加载，不存在时启动初始化配置向导。monitor 字段由后端自动维护，手动修改可能被覆盖。performance 字段控制性能优化参数（默认128KB缓冲区、批量统计、TCP_NODELAY、UDP超时）。tls 字段控制 TLS 加密配置，证书文件不存在时自动生成。vless_url 字段保存自动生成的 VLESS 连接 URL。
+
+## 初始化配置向导
+
+首次运行时，服务器会启动交互式配置向导，引导用户完成：
+
+1. **端口配置**（默认 8443）
+2. **UUID 配置**（自动生成或手动输入）
+3. **TLS 配置**：
+   - 是否启用 TLS
+   - 设置服务器域名/SNI（默认 localhost）
+   - 自动生成自签名证书（有效期 10 年）
+
+配置完成后，服务器会：
+- 保存配置到 `config.json`
+- 自动生成 TLS 证书（如果启用）
+- 证书有效期 10 年，包含完整的 SAN 配置
+- 生成 VLESS 连接 URL
+- 打印连接信息到控制台
 
 ## 文件与功能映射关系
 
@@ -136,12 +154,14 @@ npm run preview
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
 | `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器 |
-| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
+| `src/config.rs` | 配置管理、JSON解析、VLESS URL 生成 | `Config`、`generate_vless_url()` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
 | `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
+| `src/tls.rs` | TLS 配置、证书自动生成、握手处理 | `load_tls_config()`、`ensure_cert_exists()`、`generate_self_signed_cert()` |
+| `src/wizard.rs` | 初始化配置向导 | `run_init_wizard()` - 交互式配置 |
 
 ### 前端核心文件
 
@@ -201,6 +221,10 @@ npm run preview
 - **前端统计卡片** → `frontend/src/components/*.vue`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
+- **TLS 配置** → `config.json` - `tls` 节点
+- **证书生成** → `src/tls.rs:generate_cert_in_memory()`
+- **初始化向导** → `src/wizard.rs:run_init_wizard()`
+- **VLESS URL 生成** → `src/config.rs:generate_vless_url()` - 自动添加 `allowInsecure=true` 参数（自签名证书）
 
 ## 开发指南
 

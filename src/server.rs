@@ -3,6 +3,7 @@ use crate::stats::SharedStats;
 use crate::http::{is_http_request, parse_http_request, handle_http_request};
 use crate::ws::{self, SharedWsManager};
 use crate::config::{MonitoringConfig, PerformanceConfig};
+use crate::tls;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::collections::{HashSet, HashMap};
@@ -13,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
+use rustls::ServerConfig as RustlsServerConfig;
 
 /// 配置TCP socket选项
 async fn configure_tcp_socket(
@@ -99,6 +101,7 @@ pub struct VlessServer {
     ws_manager: SharedWsManager,
     monitoring_config: MonitoringConfig,
     performance_config: PerformanceConfig,
+    tls_config: Option<Arc<RustlsServerConfig>>,
 }
 
 impl VlessServer {
@@ -108,6 +111,7 @@ impl VlessServer {
         ws_manager: SharedWsManager,
         monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
+        tls_config: Option<Arc<RustlsServerConfig>>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -115,13 +119,15 @@ impl VlessServer {
             ws_manager,
             monitoring_config,
             performance_config,
+            tls_config,
         }
     }
 
     /// 启动服务器
     pub async fn run(&self) -> Result<()> {
         let listener = TcpListener::bind(self.config.bind_addr).await?;
-        info!("VLESS server listening on {}", self.config.bind_addr);
+        let tls_enabled = self.tls_config.is_some();
+        info!("VLESS server listening on {} (TLS: {})", self.config.bind_addr, tls_enabled);
 
         loop {
             match listener.accept().await {
@@ -131,6 +137,7 @@ impl VlessServer {
                     let ws_manager = Arc::clone(&self.ws_manager);
                     let monitoring_config = self.monitoring_config.clone();
                     let performance_config = self.performance_config.clone();
+                    let tls_config = self.tls_config.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
                             stream,
@@ -140,6 +147,7 @@ impl VlessServer {
                             ws_manager,
                             monitoring_config,
                             performance_config,
+                            tls_config,
                         ).await {
                             error!("Error handling connection from {}: {}", addr, e);
                         }
@@ -161,6 +169,7 @@ impl VlessServer {
         ws_manager: SharedWsManager,
         monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
+        tls_config: Option<Arc<RustlsServerConfig>>,
     ) -> Result<()> {
         debug!("New connection from {}", client_addr);
 
@@ -172,6 +181,114 @@ impl VlessServer {
             performance_config.tcp_nodelay,
         ).await?;
 
+        // Peek 首字节检测协议类型
+        let mut peek_buf = [0u8; 1];
+        let first_byte = match stream.peek(&mut peek_buf).await {
+            Ok(n) => {
+                if n == 0 {
+                    return Err(anyhow!("Connection closed by client"));
+                }
+                peek_buf[0]
+            }
+            Err(e) => {
+                warn!("Failed to peek connection from {}: {}", client_addr, e);
+                return Err(e.into());
+            }
+        };
+
+        // TLS Handshake (0x16)
+        if first_byte == 0x16 {
+            debug!("TLS handshake detected from {}", client_addr);
+            if let Some(tls_cfg) = tls_config {
+                match tls::accept_tls(stream, tls_cfg).await {
+                    Ok(tls_stream) => {
+                        // TLS 握手成功，处理连接
+                        return Self::handle_connection_after_handshake(
+                            tls_stream,
+                            client_addr,
+                            config,
+                            stats,
+                            ws_manager,
+                            monitoring_config,
+                            performance_config,
+                        ).await;
+                    }
+                    Err(e) => {
+                        warn!("TLS handshake failed from {}: {}", client_addr, e);
+                        return Err(e);
+                    }
+                }
+            } else {
+                warn!("TLS connection received but TLS is not enabled");
+                return Err(anyhow!("TLS not enabled"));
+            }
+        }
+
+        // 明文连接（HTTP 或 VLESS）
+        // 读取初始数据检测协议类型
+        let mut initial_buf = vec![0u8; 4096];
+        let n = stream.peek(&mut initial_buf).await?;
+        if n == 0 {
+            return Err(anyhow!("Connection closed by client"));
+        }
+
+        // 检测 HTTP 请求
+        if is_http_request(&initial_buf[..n]) {
+            // 读取完整请求数据
+            let n = stream.read(&mut initial_buf).await?;
+            let request_data = &initial_buf[..n];
+
+            match parse_http_request(request_data) {
+                Ok(request) => {
+                    // 检测 WebSocket 升级请求
+                    if ws::is_websocket_upgrade(&request) {
+                        debug!("WebSocket upgrade request detected from {}", client_addr);
+                        // 将所有权转移给 WebSocket 处理函数
+                        return ws::handle_websocket_connection(
+                            stream,
+                            ws_manager,
+                            stats,
+                            client_addr,
+                            Some(request_data.to_vec()),
+                        ).await;
+                    }
+
+                    let response = handle_http_request(&request, stats.clone(), monitoring_config.clone(), performance_config.clone()).await?;
+                    let mut stream = stream;
+                    stream.write_all(&response).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Failed to parse HTTP request from {}: {}", client_addr, e);
+                    return Err(e);
+                }
+            }
+        }
+
+        Self::handle_connection_after_handshake(
+            stream,
+            client_addr,
+            config,
+            stats,
+            ws_manager,
+            monitoring_config,
+            performance_config,
+        ).await
+    }
+
+    /// 连接建立后处理（通用逻辑）
+    async fn handle_connection_after_handshake<S>(
+        mut stream: S,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        stats: SharedStats,
+        _ws_manager: SharedWsManager,
+        monitoring_config: MonitoringConfig,
+        performance_config: PerformanceConfig,
+    ) -> Result<()>
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+    {
         // 读取请求数据
         let mut header_buf = vec![0u8; performance_config.buffer_size.min(4096)];
         let n = stream.read(&mut header_buf).await?;
@@ -189,13 +306,10 @@ impl VlessServer {
                     // 检测 WebSocket 升级请求
                     if ws::is_websocket_upgrade(&request) {
                         debug!("WebSocket upgrade request detected from {} to {}", client_addr, request.path);
-                        return ws::handle_websocket_connection(
-                            stream,
-                            ws_manager,
-                            stats,
-                            client_addr,
-                            Some(header_bytes.to_vec())
-                        ).await;
+                        // 对于 WebSocket，我们需要原始的 TcpStream
+                        // 这里暂时不支持 TLS over WebSocket
+                        warn!("WebSocket over TLS not yet supported");
+                        return Ok(());
                     }
 
                     let response = handle_http_request(&request, stats.clone(), monitoring_config.clone(), performance_config.clone()).await?;
@@ -252,14 +366,17 @@ impl VlessServer {
     }
 
     /// 处理TCP代理
-    async fn handle_tcp_proxy(
-        client_stream: TcpStream,
+    async fn handle_tcp_proxy<S>(
+        client_stream: S,
         request: VlessRequest,
         initial_data: Bytes,
         stats: SharedStats,
         perf_config: PerformanceConfig,
         user_email: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+    {
         let uuid_str = request.uuid.to_string();
         let email_opt = user_email;
 
@@ -295,11 +412,10 @@ impl VlessServer {
             stats.lock().await.add_user_upload_bytes(&uuid_str, initial_len as u64, email_opt.clone());
         }
 
-        info!("Established proxy connection: {} -> {}",
-               client_stream.peer_addr()?, target_addr);
+        info!("Established TCP proxy connection");
 
         // 使用tokio的io::copy_bidirectional实现零拷贝传输
-        let (mut client_read, mut client_write) = client_stream.into_split();
+        let (mut client_read, mut client_write) = tokio::io::split(client_stream);
         let (mut target_read, mut target_write) = target_stream.into_split();
 
         let stats_c2t = stats.clone();
@@ -387,19 +503,22 @@ impl VlessServer {
         // 等待两个任务完成
         let _ = tokio::join!(upload_task, download_task);
 
-        debug!("Proxy connection closed");
+        debug!("TCP proxy connection closed");
         Ok(())
     }
 
     /// 处理UDP代理（UDP over TCP机制）
-    async fn handle_udp_proxy(
-        client_stream: TcpStream,
+    async fn handle_udp_proxy<S>(
+        client_stream: S,
         request: VlessRequest,
         _initial_data: Bytes,
         stats: SharedStats,
         perf_config: PerformanceConfig,
         user_email: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+    {
         let uuid_str = request.uuid.to_string();
 
         // 解析目标地址
@@ -415,7 +534,7 @@ impl VlessServer {
             _ => request.address.to_socket_addr(request.port)?,
         };
 
-        info!("Establishing UDP proxy: {:?} -> {}", client_stream.peer_addr(), target_addr);
+        info!("Establishing UDP proxy to {}", target_addr);
 
         // 绑定本地UDP socket（随机端口）
         let udp_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
@@ -427,7 +546,7 @@ impl VlessServer {
         let udp_recv_buffer = perf_config.udp_recv_buffer;
 
         // 分离TCP流
-        let (mut client_read, mut client_write) = client_stream.into_split();
+        let (mut client_read, mut client_write) = tokio::io::split(client_stream);
 
         // 任务1：客户端 → 目标（读取TCP数据，发送UDP包）
         let udp_socket_c2t = Arc::clone(&udp_socket);
