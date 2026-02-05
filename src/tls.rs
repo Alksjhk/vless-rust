@@ -2,6 +2,7 @@
 //!
 //! 提供 TLS 配置加载、证书生成和握手处理功能
 
+use crate::config::TlsConfig as ConfigTlsConfig;
 use anyhow::{Context, Result};
 use rustls::pki_types::CertificateDer;
 use rustls::ServerConfig;
@@ -12,7 +13,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsStream;
-use crate::config::TlsConfig as ConfigTlsConfig;
 
 /// 确保 TLS 证书文件存在
 ///
@@ -131,11 +131,11 @@ pub fn generate_self_signed_cert(
     ];
 
     // 生成密钥对
-    let key_pair = KeyPair::generate()
-        .context("生成密钥对失败")?;
+    let key_pair = KeyPair::generate().context("生成密钥对失败")?;
 
     // 生成证书
-    let cert = cert_params.self_signed(&key_pair)
+    let cert = cert_params
+        .self_signed(&key_pair)
         .context("生成自签名证书失败")?;
 
     // 序列化为 PEM 格式

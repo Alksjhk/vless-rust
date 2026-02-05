@@ -208,6 +208,93 @@ GET /api/performance
 
 ---
 
+### 6. 获取连接池监控数据
+
+获取连接池的性能统计信息。
+
+**请求**
+```http
+GET /api/connection-pool-stats
+```
+
+**响应示例**
+```json
+{
+  "total_created": 150,
+  "total_reused": 320,
+  "total_closed": 145,
+  "current_active": 5,
+  "current_idle": 12,
+  "cache_hits": 320,
+  "cache_misses": 150,
+  "hit_rate": 68.08
+}
+```
+
+**字段说明**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| total_created | number | 总创建连接数 |
+| total_reused | number | 总复用连接数 |
+| total_closed | number | 总关闭连接数 |
+| current_active | number | 当前活跃连接数 |
+| current_idle | number | 当前空闲连接数 |
+| cache_hits | number | 缓存命中次数 |
+| cache_misses | number | 缓存未命中次数 |
+| hit_rate | number | 缓存命中率（%） |
+
+---
+
+### 7. 获取内存池监控数据
+
+获取内存池的性能统计信息。
+
+**请求**
+```http
+GET /api/memory-pool-stats
+```
+
+**响应示例**
+```json
+{
+  "small_pool": {
+    "buffer_size": 4096,
+    "current_size": 45,
+    "peak_size": 50,
+    "total_allocated": 1234,
+    "total_returned": 1189
+  },
+  "medium_pool": {
+    "buffer_size": 65536,
+    "current_size": 18,
+    "peak_size": 20,
+    "total_allocated": 567,
+    "total_returned": 549
+  },
+  "large_pool": {
+    "buffer_size": 131072,
+    "current_size": 8,
+    "peak_size": 10,
+    "total_allocated": 234,
+    "total_returned": 226
+  }
+}
+```
+
+**字段说明**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| small_pool | object | 小缓冲区池（4KB）统计 |
+| medium_pool | object | 中等缓冲区池（64KB）统计 |
+| large_pool | object | 大缓冲区池（128KB）统计 |
+| *.buffer_size | number | 缓冲区大小（字节） |
+| *.current_size | number | 当前池中缓冲区数量 |
+| *.peak_size | number | 峰值池大小 |
+| *.total_allocated | number | 总分配次数 |
+| *.total_returned | number | 总归还次数 |
+
+---
+
 ## WebSocket API
 
 ### 连接端点
@@ -274,12 +361,45 @@ ws://your-server:8443/ws
     "total_memory": "16.00 GB",
     "active_connections": 5,
     "max_connections": 300,
+    "connection_pool": {
+      "total_created": 150,
+      "total_reused": 320,
+      "total_closed": 145,
+      "current_active": 5,
+      "current_idle": 12,
+      "cache_hits": 320,
+      "cache_misses": 150,
+      "hit_rate": 68.08
+    },
+    "memory_pool": {
+      "small_pool": {
+        "buffer_size": 4096,
+        "current_size": 45,
+        "peak_size": 50,
+        "total_allocated": 1234,
+        "total_returned": 1189
+      },
+      "medium_pool": {
+        "buffer_size": 65536,
+        "current_size": 18,
+        "peak_size": 20,
+        "total_allocated": 567,
+        "total_returned": 549
+      },
+      "large_pool": {
+        "buffer_size": 131072,
+        "current_size": 8,
+        "peak_size": 10,
+        "total_allocated": 234,
+        "total_returned": 226
+      }
+    },
     "users": [...]
   }
 }
 ```
 
-**payload 结构**: 同 REST API 的 `/api/stats` 响应。
+**payload 结构**: 同 REST API 的 `/api/stats` 响应，并包含连接池和内存池统计数据。
 
 ### 心跳机制
 

@@ -1,6 +1,6 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use anyhow::Result;
 
 /// 监控配置
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -43,20 +43,44 @@ pub struct PerformanceConfig {
     pub udp_recv_buffer: usize,
 }
 
-fn default_history_duration() -> u64 { 60 }
-fn default_broadcast_interval() -> u64 { 1 }
-fn default_ws_max_connections() -> usize { 300 }
-fn default_ws_heartbeat_timeout() -> u64 { 60 }
-fn default_vless_max_connections() -> usize { 300 }
+fn default_history_duration() -> u64 {
+    60
+}
+fn default_broadcast_interval() -> u64 {
+    1
+}
+fn default_ws_max_connections() -> usize {
+    300
+}
+fn default_ws_heartbeat_timeout() -> u64 {
+    60
+}
+fn default_vless_max_connections() -> usize {
+    300
+}
 
 // Performance config defaults
-fn default_buffer_size() -> usize { 128 * 1024 }  // 128KB
-fn default_tcp_recv_buffer() -> usize { 256 * 1024 }  // 256KB
-fn default_tcp_send_buffer() -> usize { 256 * 1024 }  // 256KB
-fn default_tcp_nodelay() -> bool { true }
-fn default_stats_batch_size() -> usize { 64 * 1024 }  // 64KB
-fn default_udp_timeout() -> u64 { 30 }
-fn default_udp_recv_buffer() -> usize { 64 * 1024 }  // 64KB
+fn default_buffer_size() -> usize {
+    128 * 1024
+} // 128KB
+fn default_tcp_recv_buffer() -> usize {
+    256 * 1024
+} // 256KB
+fn default_tcp_send_buffer() -> usize {
+    256 * 1024
+} // 256KB
+fn default_tcp_nodelay() -> bool {
+    true
+}
+fn default_stats_batch_size() -> usize {
+    64 * 1024
+} // 64KB
+fn default_udp_timeout() -> u64 {
+    30
+}
+fn default_udp_recv_buffer() -> usize {
+    64 * 1024
+} // 64KB
 
 impl Default for MonitoringConfig {
     fn default() -> Self {
@@ -99,11 +123,23 @@ pub struct TlsConfig {
     /// 服务器名称（用于 SNI 和证书生成）
     #[serde(default = "default_server_name")]
     pub server_name: String,
+    /// XTLS 流控类型
+    #[serde(default = "default_xtls_flow")]
+    pub xtls_flow: String,
 }
 
-fn default_cert_file() -> String { "certs/server.crt".to_string() }
-fn default_key_file() -> String { "certs/server.key".to_string() }
-fn default_server_name() -> String { "localhost".to_string() }
+fn default_cert_file() -> String {
+    "certs/server.crt".to_string()
+}
+fn default_key_file() -> String {
+    "certs/server.key".to_string()
+}
+fn default_server_name() -> String {
+    "localhost".to_string()
+}
+fn default_xtls_flow() -> String {
+    "xtls-rprx-vision".to_string()
+}
 
 impl Default for TlsConfig {
     fn default() -> Self {
@@ -112,6 +148,7 @@ impl Default for TlsConfig {
             cert_file: default_cert_file(),
             key_file: default_key_file(),
             server_name: default_server_name(),
+            xtls_flow: default_xtls_flow(),
         }
     }
 }
@@ -187,17 +224,23 @@ impl Config {
         // 安全类型：none 或 tls
         let security = if self.tls.enabled { "tls" } else { "none" };
 
-        // TLS 参数（v2rayN 兼容格式，移除 allowInsecure）
+        // TLS 参数（v2rayN 兼容格式，包含 XTLS 流控）
         let tls_params = if self.tls.enabled {
             // v2rayN 需要标准的参数顺序和名称
             // allowInsecure 需要导入后在客户端手动设置
-            format!("&encryption=none&flow=&sni={}&alpn=h2,http/1.1", self.tls.server_name)
+            // 包含 XTLS 流控参数
+            format!(
+                "&encryption=none&flow={}&sni={}&alpn=h2,http/1.1",
+                self.tls.xtls_flow, self.tls.server_name
+            )
         } else {
             "&encryption=none&flow=".to_string()
         };
 
         // 邮箱备注（用于客户端显示）
-        let remarks = user.email.as_deref()
+        let remarks = user
+            .email
+            .as_deref()
             .unwrap_or("vless-rust")
             .replace(" ", "%20");
 
@@ -220,12 +263,10 @@ mod tests {
                 listen: "0.0.0.0".to_string(),
                 port: 8443,
             },
-            users: vec![
-                UserConfig {
-                    uuid: Uuid::new_v4().to_string(),
-                    email: Some("user@example.com".to_string()),
-                }
-            ],
+            users: vec![UserConfig {
+                uuid: Uuid::new_v4().to_string(),
+                email: Some("user@example.com".to_string()),
+            }],
             monitoring: MonitoringConfig::default(),
             performance: PerformanceConfig::default(),
             tls: TlsConfig::default(),

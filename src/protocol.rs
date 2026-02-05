@@ -1,11 +1,11 @@
+use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use uuid::Uuid;
-use anyhow::{Result, anyhow};
 
 /// VLESS协议版本
-pub const VLESS_VERSION_BETA: u8 = 0;  // 测试版本
-pub const VLESS_VERSION_RELEASE: u8 = 1;  // 正式版本
+pub const VLESS_VERSION_BETA: u8 = 0; // 测试版本
+pub const VLESS_VERSION_RELEASE: u8 = 1; // 正式版本
 
 /// VLESS命令类型
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,7 +64,7 @@ impl Address {
         }
 
         let addr_type = AddressType::try_from(buf.get_u8())?;
-        
+
         match addr_type {
             AddressType::Ipv4 => {
                 if buf.len() < 4 {
@@ -105,6 +105,34 @@ impl Address {
     }
 }
 
+/// XTLS 流控类型
+#[derive(Debug, Clone, PartialEq)]
+pub enum XtlsFlow {
+    None,
+    XtlsRprxVision,
+    XtlsRprxVisionUdp443,
+}
+
+impl XtlsFlow {
+    #[allow(dead_code)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "xtls-rprx-vision" => Self::XtlsRprxVision,
+            "xtls-rprx-vision-udp443" => Self::XtlsRprxVisionUdp443,
+            _ => Self::None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::XtlsRprxVision => "xtls-rprx-vision",
+            Self::XtlsRprxVisionUdp443 => "xtls-rprx-vision-udp443",
+        }
+    }
+}
+
 /// VLESS请求
 #[derive(Debug, Clone)]
 pub struct VlessRequest {
@@ -117,6 +145,7 @@ pub struct VlessRequest {
     pub command: Command,
     pub port: u16,
     pub address: Address,
+    pub xtls_flow: XtlsFlow,
 }
 
 impl VlessRequest {
@@ -138,14 +167,19 @@ impl VlessRequest {
 
         // Addons长度
         let addons_length = buf.get_u8();
-        
-        // Addons数据
+
+        // Addons数据 - 解析XTLS流控信息
         let mut addons = vec![0u8; addons_length as usize];
+        let mut xtls_flow = XtlsFlow::None;
+
         if addons_length > 0 {
             if buf.len() < addons_length as usize {
                 return Err(anyhow!("Invalid addons length"));
             }
             buf.copy_to_slice(&mut addons);
+
+            // 解析XTLS流控信息（如果存在）
+            xtls_flow = Self::parse_xtls_flow(&addons);
         }
 
         // 命令
@@ -165,9 +199,25 @@ impl VlessRequest {
             command,
             port,
             address,
+            xtls_flow,
         };
 
         Ok((request, buf))
+    }
+
+    /// 解析XTLS流控信息
+    fn parse_xtls_flow(addons: &[u8]) -> XtlsFlow {
+        // 简化的XTLS流控解析
+        // 在实际实现中，这里应该解析完整的addons结构
+        // 目前假设addons包含流控字符串
+        if let Ok(addon_str) = std::str::from_utf8(addons) {
+            if addon_str.contains("xtls-rprx-vision-udp443") {
+                return XtlsFlow::XtlsRprxVisionUdp443;
+            } else if addon_str.contains("xtls-rprx-vision") {
+                return XtlsFlow::XtlsRprxVision;
+            }
+        }
+        XtlsFlow::None
     }
 }
 
@@ -182,7 +232,7 @@ pub struct VlessResponse {
 impl VlessResponse {
     pub fn new_with_version(version: u8) -> Self {
         Self {
-            version,  // 使用客户端相同的版本号
+            version, // 使用客户端相同的版本号
             addons_length: 0,
             addons: Vec::new(),
         }

@@ -1,6 +1,6 @@
-use crate::stats::SharedStats;
 use crate::config::{MonitoringConfig, PerformanceConfig};
-use anyhow::{Result, anyhow};
+use crate::stats::SharedStats;
+use anyhow::{anyhow, Result};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
@@ -25,12 +25,15 @@ pub fn is_http_request(data: &[u8]) -> bool {
     }
 
     let prefix = &data[..4];
-    matches!(prefix, b"GET " | b"POST" | b"HEAD" | b"PUT " | b"DELE" | b"OPTI" | b"PATC" | b"CONN" | b"TRAC")
+    matches!(
+        prefix,
+        b"GET " | b"POST" | b"HEAD" | b"PUT " | b"DELE" | b"OPTI" | b"PATC" | b"CONN" | b"TRAC"
+    )
 }
 
 pub fn parse_http_request(data: &[u8]) -> Result<HttpRequest> {
-    let request_str = std::str::from_utf8(data)
-        .map_err(|_| anyhow!("Invalid UTF-8 in HTTP request"))?;
+    let request_str =
+        std::str::from_utf8(data).map_err(|_| anyhow!("Invalid UTF-8 in HTTP request"))?;
 
     let lines: Vec<&str> = request_str.lines().collect();
     if lines.is_empty() {
@@ -73,45 +76,59 @@ pub async fn handle_http_request(
     performance_config: PerformanceConfig,
 ) -> Result<Vec<u8>> {
     match request.path.as_str() {
-        "/" | "/index.html" => {
-            serve_embedded_file("index.html", "text/html")
-        }
+        "/" | "/index.html" => serve_embedded_file("index.html", "text/html"),
         path if path.starts_with("/assets/") => {
             let relative_path = path.trim_start_matches('/');
             serve_embedded_file(relative_path, "")
         }
-        "/vite.svg" => {
-            serve_embedded_file("vite.svg", "image/svg+xml")
-        }
+        "/vite.svg" => serve_embedded_file("vite.svg", "image/svg+xml"),
         "/api/stats" => {
             let mut stats_guard = stats.lock().await;
             let monitor_data = stats_guard.get_monitor_data();
             let json = serde_json::to_string(&monitor_data)?;
-            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+            Ok(create_http_response_bytes(
+                200,
+                "application/json",
+                json.as_bytes(),
+            ))
         }
         "/api/user-stats" => {
             let stats_guard = stats.lock().await;
             let user_stats = stats_guard.get_all_user_stats();
             let json = serde_json::to_string(&user_stats)?;
-            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+            Ok(create_http_response_bytes(
+                200,
+                "application/json",
+                json.as_bytes(),
+            ))
         }
         "/api/speed-history" => {
             let stats_guard = stats.lock().await;
             let history = stats_guard.get_speed_history_response();
             let json = serde_json::to_string(&history)?;
-            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+            Ok(create_http_response_bytes(
+                200,
+                "application/json",
+                json.as_bytes(),
+            ))
         }
         "/api/config" => {
             let json = serde_json::to_string(&monitoring_config)?;
-            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+            Ok(create_http_response_bytes(
+                200,
+                "application/json",
+                json.as_bytes(),
+            ))
         }
         "/api/performance" => {
             let json = serde_json::to_string(&performance_config)?;
-            Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
+            Ok(create_http_response_bytes(
+                200,
+                "application/json",
+                json.as_bytes(),
+            ))
         }
-        _ => {
-            Ok(create_http_response(404, "text/plain", "Not Found"))
-        }
+        _ => Ok(create_http_response(404, "text/plain", "Not Found")),
     }
 }
 
@@ -127,9 +144,7 @@ fn serve_embedded_file(path: &str, default_content_type: &str) -> Result<Vec<u8>
             let data = content.data.to_vec();
             Ok(create_http_response_bytes(200, content_type, &data))
         }
-        None => {
-            Ok(create_http_response(404, "text/plain", "File Not Found"))
-        }
+        None => Ok(create_http_response(404, "text/plain", "File Not Found")),
     }
 }
 
@@ -186,9 +201,11 @@ impl HttpResponseBuilder {
     fn security_headers(self) -> Self {
         self.header("X-Content-Type-Options", "nosniff")
             .header("X-Frame-Options", "SAMEORIGIN")
-            .header("Content-Security-Policy",
+            .header(
+                "Content-Security-Policy",
                 "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
-                 style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;")
+                 style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;",
+            )
             .header("Referrer-Policy", "strict-origin-when-cross-origin")
             .header("X-XSS-Protection", "1; mode=block")
     }
@@ -201,7 +218,10 @@ impl HttpResponseBuilder {
     fn build(self) -> Vec<u8> {
         let mut header = format!(
             "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
-            self.status, self.status_text, self.content_type, self.body.len()
+            self.status,
+            self.status_text,
+            self.content_type,
+            self.body.len()
         );
         for (name, value) in &self.headers {
             header.push_str(name);

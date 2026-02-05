@@ -179,6 +179,8 @@ project/
 ├─ README.md              # 项目说明
 ├─ Cargo.toml             # Rust 配置
 ├─ config.json            # 服务器配置
+├─ .cargo/
+│  └─ config.toml         # 编译配置
 ├─ src/                   # Rust 源码
 │  ├─ main.rs             # 程序入口
 │  ├─ config.rs           # 配置模块
@@ -186,7 +188,11 @@ project/
 │  ├─ server.rs           # 服务器逻辑
 │  ├─ stats.rs            # 统计模块
 │  ├─ http.rs             # HTTP 处理
-│  └─ ws.rs               # WebSocket
+│  ├─ ws.rs               # WebSocket
+│  ├─ tls.rs              # TLS 配置和证书
+│  ├─ wizard.rs           # 初始化向导
+│  ├─ memory.rs           # 内存池管理
+│  └─ connection_pool.rs  # 连接池管理
 ├─ frontend/              # 前端项目
 │  ├─ package.json        # NPM 配置
 │  ├─ vite.config.js      # Vite 配置
@@ -196,10 +202,13 @@ project/
 │     ├─ components/      # 组件
 │     └─ composables/     # Composables
 ├─ static/                # 前端构建产物
+├─ certs/                 # TLS 证书目录
+│  ├─ server.crt          # 服务器证书
+│  └─ server.key          # 私钥文件
 ├─ docs/                  # 文档目录
 │  ├─ technology.md       # 技术文档
 │  ├─ api.md              # API 文档
-│  └─ *.md                # 其他文档
+│  └─ *.md                # 更新日志
 └─ target/                # 编译输出
 ```
 
@@ -308,8 +317,4 @@ project/
 - 优化用户体验
 - 改进文档
 
----
 
-**版本**: 1.0.0
-**更新日期**: 2026-02-02
-**维护者**: 项目团队

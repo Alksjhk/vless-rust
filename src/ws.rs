@@ -1,23 +1,21 @@
-use crate::stats::{MonitorData, SharedStats, SpeedHistoryResponse};
 use crate::config::MonitoringConfig;
-use anyhow::{Result, anyhow};
+use crate::stats::{MonitorData, SharedStats, SpeedHistoryResponse};
+use anyhow::{anyhow, Result};
 use futures_channel::mpsc::UnboundedSender;
 use futures_util::{stream::StreamExt, SinkExt};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tokio_tungstenite::{
-    tungstenite::protocol::{Message, WebSocketConfig},
-};
-use std::time::Duration;
+use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub(crate) enum WsMessage {
     #[serde(rename = "stats")]
-    Stats(MonitorData),
+    Stats(Box<MonitorData>),
     #[serde(rename = "history")]
     History(SpeedHistoryResponse),
 }
@@ -57,19 +55,30 @@ impl WebSocketManager {
 
     pub async fn add_connection(&mut self, conn: WebSocketConnection) -> Result<usize> {
         if self.connections.len() >= self.config.websocket_max_connections {
-            return Err(anyhow!("Maximum WebSocket connections reached ({})", self.config.websocket_max_connections));
+            return Err(anyhow!(
+                "Maximum WebSocket connections reached ({})",
+                self.config.websocket_max_connections
+            ));
         }
 
         let id = self.next_id;
         self.connections.insert(id, conn);
         self.next_id += 1;
-        tracing::info!("WebSocket connection added: id={}, total={}", id, self.connections.len());
+        tracing::info!(
+            "WebSocket connection added: id={}, total={}",
+            id,
+            self.connections.len()
+        );
         Ok(id)
     }
 
     pub async fn remove_connection(&mut self, id: usize) {
-        if let Some(_) = self.connections.remove(&id) {
-            tracing::info!("WebSocket connection removed: id={}, total={}", id, self.connections.len());
+        if self.connections.remove(&id).is_some() {
+            tracing::info!(
+                "WebSocket connection removed: id={}, total={}",
+                id,
+                self.connections.len()
+            );
         }
     }
 
@@ -78,7 +87,7 @@ impl WebSocketManager {
         let mut dead_connections = Vec::new();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.unbounded_send(Message::Text(json.clone())) {
+            if conn.tx.unbounded_send(Message::Text(json.clone())).is_err() {
                 dead_connections.push(*id);
             }
         }
@@ -91,7 +100,7 @@ impl WebSocketManager {
         let now = chrono::Utc::now();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.unbounded_send(Message::Ping(vec![])) {
+            if conn.tx.unbounded_send(Message::Ping(vec![])).is_err() {
                 dead_ids.push(*id);
                 continue;
             }
@@ -100,7 +109,11 @@ impl WebSocketManager {
             if let Ok(last_activity) = conn.last_activity.try_lock() {
                 let duration = now.signed_duration_since(*last_activity);
                 if duration.num_seconds() > self.config.websocket_heartbeat_timeout as i64 {
-                    tracing::warn!("WebSocket connection {} timeout after {}s", id, duration.num_seconds());
+                    tracing::warn!(
+                        "WebSocket connection {} timeout after {}s",
+                        id,
+                        duration.num_seconds()
+                    );
                     dead_ids.push(*id);
                 }
             }
@@ -120,7 +133,11 @@ impl Default for WebSocketManager {
     }
 }
 
-pub async fn start_broadcasting_task(ws_manager: SharedWsManager, stats: SharedStats, config: MonitoringConfig) {
+pub async fn start_broadcasting_task(
+    ws_manager: SharedWsManager,
+    stats: SharedStats,
+    config: MonitoringConfig,
+) {
     let mut interval = tokio::time::interval(Duration::from_secs(config.broadcast_interval));
     let mut cleanup_interval = tokio::time::interval(Duration::from_secs(30));
 
@@ -131,7 +148,7 @@ pub async fn start_broadcasting_task(ws_manager: SharedWsManager, stats: SharedS
                 let monitor_data = stats_guard.get_monitor_data();
                 drop(stats_guard);
 
-                let msg = WsMessage::Stats(monitor_data);
+                let msg = WsMessage::Stats(Box::new(monitor_data));
 
                 let manager = ws_manager.write().await;
                 match manager.broadcast(&msg).await {
@@ -191,13 +208,9 @@ pub fn is_websocket_upgrade(request: &HttpRequest) -> bool {
         return false;
     }
 
-    let has_connection_header = request
-        .headers
-        .iter()
-        .any(|(k, v)| {
-            k.to_lowercase() == "connection" &&
-            (v.to_lowercase().contains("upgrade") || v == "Upgrade")
-        });
+    let has_connection_header = request.headers.iter().any(|(k, v)| {
+        k.to_lowercase() == "connection" && (v.to_lowercase().contains("upgrade") || v == "Upgrade")
+    });
 
     if !has_connection_header {
         tracing::debug!("Not WebSocket: missing or invalid Connection header");
@@ -212,7 +225,10 @@ pub fn is_websocket_upgrade(request: &HttpRequest) -> bool {
         return false;
     }
 
-    tracing::info!("WebSocket upgrade request validated for path: {}", request.path);
+    tracing::info!(
+        "WebSocket upgrade request validated for path: {}",
+        request.path
+    );
 
     // 验证 Origin header 防止 CSRF 攻击
     if let Some(origin) = request
@@ -222,7 +238,10 @@ pub fn is_websocket_upgrade(request: &HttpRequest) -> bool {
         .map(|(_, v)| v.as_str())
     {
         if !is_allowed_origin(origin) {
-            tracing::warn!("Rejected WebSocket connection from disallowed origin: {}", origin);
+            tracing::warn!(
+                "Rejected WebSocket connection from disallowed origin: {}",
+                origin
+            );
             return false;
         }
     }
@@ -391,7 +410,9 @@ pub async fn handle_websocket_connection(
 fn extract_websocket_key(request: &str) -> Result<String> {
     for line in request.lines() {
         if line.to_lowercase().starts_with("sec-websocket-key:") {
-            let key = line.split(':').nth(1)
+            let key = line
+                .split(':')
+                .nth(1)
                 .ok_or_else(|| anyhow!("Invalid Sec-WebSocket-Key header"))?
                 .trim();
             return Ok(key.to_string());
@@ -401,8 +422,8 @@ fn extract_websocket_key(request: &str) -> Result<String> {
 }
 
 fn compute_accept_key(key: &str) -> String {
-    use sha1::{Digest, Sha1};
     use base64::Engine;
+    use sha1::{Digest, Sha1};
     const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     let mut hasher = Sha1::new();
