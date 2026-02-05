@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// VLESS协议版本
@@ -206,18 +207,63 @@ impl VlessRequest {
     }
 
     /// 解析XTLS流控信息
+    ///
+    /// VLESS Addons 结构：
+    /// [ProtoByte (1)] [Command (1)] [Data...]
+    ///
+    /// ProtoByte定义：
+    /// - 0x01: XTLS流控
+    ///
+    /// Command定义（当ProtoByte=0x01时）：
+    /// - 0x00: 无流控
+    /// - 0x01: xtls-rprx-vision
+    /// - 0x02: xtls-rprx-vision-udp443
     fn parse_xtls_flow(addons: &[u8]) -> XtlsFlow {
-        // 简化的XTLS流控解析
-        // 在实际实现中，这里应该解析完整的addons结构
-        // 目前假设addons包含流控字符串
-        if let Ok(addon_str) = std::str::from_utf8(addons) {
-            if addon_str.contains("xtls-rprx-vision-udp443") {
-                return XtlsFlow::XtlsRprxVisionUdp443;
-            } else if addon_str.contains("xtls-rprx-vision") {
-                return XtlsFlow::XtlsRprxVision;
+        if addons.is_empty() {
+            return XtlsFlow::None;
+        }
+
+        // VLESS addons 至少需要2字节（ProtoByte + Command）
+        if addons.len() < 2 {
+            // 尝试兼容旧的字符串格式
+            if let Ok(addon_str) = std::str::from_utf8(addons) {
+                if addon_str.contains("xtls-rprx-vision-udp443") {
+                    return XtlsFlow::XtlsRprxVisionUdp443;
+                } else if addon_str.contains("xtls-rprx-vision") {
+                    return XtlsFlow::XtlsRprxVision;
+                }
+            }
+            return XtlsFlow::None;
+        }
+
+        let proto_byte = addons[0];
+
+        // 检查是否为XTLS流控
+        if proto_byte != 0x01 {
+            debug!("VLESS: Non-XTLS proto byte: 0x{:02x}", proto_byte);
+            return XtlsFlow::None;
+        }
+
+        let flow_command = addons[1];
+
+        match flow_command {
+            0x00 => {
+                debug!("VLESS: XTLS flow disabled");
+                XtlsFlow::None
+            }
+            0x01 => {
+                info!("VLESS: XTLS-Rprx-Vision flow detected");
+                XtlsFlow::XtlsRprxVision
+            }
+            0x02 => {
+                info!("VLESS: XTLS-Rprx-Vision-UDP443 flow detected");
+                XtlsFlow::XtlsRprxVisionUdp443
+            }
+            _ => {
+                warn!("VLESS: Unknown XTLS flow command: 0x{:02x}", flow_command);
+                XtlsFlow::None
             }
         }
-        XtlsFlow::None
     }
 }
 

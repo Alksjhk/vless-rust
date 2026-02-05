@@ -37,6 +37,7 @@
         <MemoryCard />
         <ConnectionsCard />
         <ConnectionPoolCard />
+        <XtlsVisionCard />
       </div>
 
       <!-- 用户流量统计 -->
@@ -55,6 +56,7 @@ import UptimeCard from './components/UptimeCard.vue'
 import MemoryCard from './components/MemoryCard.vue'
 import ConnectionsCard from './components/ConnectionsCard.vue'
 import ConnectionPoolCard from './components/ConnectionPoolCard.vue'
+import XtlsVisionCard from './components/XtlsVisionCard.vue'
 import UserStats from './components/UserStats.vue'
 import TrafficChart from './components/TrafficChart.vue'
 import { useWebSocket } from './composables/useWebSocket'

@@ -8,6 +8,7 @@ mod stats;
 mod tls;
 mod wizard;
 mod ws;
+mod xtls;
 
 use anyhow::Result;
 use config::Config;

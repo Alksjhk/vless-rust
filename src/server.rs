@@ -2,11 +2,12 @@ use crate::config::{MonitoringConfig, PerformanceConfig};
 use crate::connection_pool::GlobalConnectionPools;
 use crate::http::{handle_http_request, is_http_request, parse_http_request};
 use crate::memory::GlobalBufferPools;
-use crate::protocol::{Address, Command, VlessRequest, VlessResponse};
+use crate::protocol::{Address, Command, VlessRequest, VlessResponse, XtlsFlow};
 use crate::stats::SharedStats;
 use crate::tls;
 use crate::ws::{self, SharedWsManager};
-use anyhow::{anyhow, Result};
+use crate::xtls;
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use rustls::ServerConfig as RustlsServerConfig;
 use std::collections::{HashMap, HashSet};
@@ -15,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio_rustls::TlsStream;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -225,8 +227,8 @@ impl VlessServer {
             if let Some(tls_cfg) = tls_config {
                 match tls::accept_tls(stream, tls_cfg).await {
                     Ok(tls_stream) => {
-                        // TLS 握手成功，处理连接
-                        return Self::handle_connection_after_handshake(
+                        // TLS 握手成功，需要解析 VLESS 请求以确定流控类型
+                        return Self::handle_tls_connection(
                             tls_stream,
                             client_addr,
                             config,
@@ -312,6 +314,132 @@ impl VlessServer {
         .await
     }
 
+    /// TLS 连接处理（支持 Vision 流控）
+    ///
+    /// 此函数专门处理 TLS 连接，会先解析 VLESS 请求以确定流控类型，
+    /// 然后根据流控类型选择相应的处理路径。
+    async fn handle_tls_connection(
+        mut tls_stream: TlsStream<TcpStream>,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        stats: SharedStats,
+        _ws_manager: SharedWsManager,
+        monitoring_config: MonitoringConfig,
+        performance_config: PerformanceConfig,
+        buffer_pools: Arc<GlobalBufferPools>,
+        connection_pools: Arc<GlobalConnectionPools>,
+    ) -> Result<()> {
+        // 使用内存池获取缓冲区
+        let mut header_buffer = buffer_pools.get_buffer(performance_config.buffer_size.min(4096));
+        let n = tls_stream.read(header_buffer.as_mut()).await?;
+        if n == 0 {
+            return Err(anyhow!("Connection closed by client"));
+        }
+
+        let header_bytes = Bytes::from(header_buffer[..n].to_vec());
+
+        // 检测HTTP请求
+        if is_http_request(&header_bytes) {
+            debug!("HTTP request detected from {}", client_addr);
+            match parse_http_request(&header_bytes) {
+                Ok(request) => {
+                    let response = handle_http_request(
+                        &request,
+                        stats.clone(),
+                        monitoring_config.clone(),
+                        performance_config.clone(),
+                    )
+                    .await?;
+                    tls_stream.write_all(&response).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Failed to parse HTTP request from {}: {}", client_addr, e);
+                    return Err(e);
+                }
+            }
+        }
+
+        // 解析VLESS请求
+        let (request, remaining_data) = VlessRequest::decode(header_bytes)?;
+        debug!("Parsed VLESS request: {:?}", request);
+
+        // 验证用户UUID
+        if !config.users.contains(&request.uuid) {
+            warn!("Invalid UUID from {}: {}", client_addr, request.uuid);
+            return Err(anyhow!("Invalid user UUID"));
+        }
+
+        info!(
+            "Authenticated user {} from {} with XTLS flow: {:?}",
+            request.uuid, client_addr, request.xtls_flow
+        );
+
+        let uuid_str = request.uuid.to_string();
+        let user_email = config.get_user_email(&request.uuid);
+
+        // RAII guard for connection counting
+        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email.clone()).await;
+
+        // 发送响应头
+        let response = VlessResponse::new_with_version(request.version);
+        tls_stream.write_all(&response.encode()).await?;
+
+        // 根据命令类型和XTLS流控类型处理连接
+        match request.command {
+            Command::Tcp => {
+                match request.xtls_flow {
+                    XtlsFlow::None => {
+                        // 普通代理模式 - 使用通用路径
+                        debug!("Using normal proxy mode (no XTLS flow)");
+                        Self::handle_tcp_proxy(
+                            tls_stream,
+                            request,
+                            remaining_data,
+                            stats.clone(),
+                            performance_config,
+                            user_email,
+                            buffer_pools,
+                            connection_pools,
+                        )
+                        .await
+                    }
+                    XtlsFlow::XtlsRprxVision | XtlsFlow::XtlsRprxVisionUdp443 => {
+                        // XTLS Vision流控模式 - 使用专用路径
+                        info!("Using XTLS-Rprx-Vision flow control (optimized TLS path)");
+                        Self::handle_tcp_proxy_with_vision_tls(
+                            tls_stream,
+                            request,
+                            remaining_data,
+                            stats.clone(),
+                            performance_config,
+                            user_email,
+                            connection_pools,
+                        )
+                        .await
+                    }
+                }
+            }
+            Command::Udp => {
+                let user_email = config.get_user_email(&request.uuid);
+                Self::handle_udp_proxy(
+                    tls_stream,
+                    request,
+                    remaining_data,
+                    stats.clone(),
+                    performance_config,
+                    user_email,
+                    buffer_pools,
+                )
+                .await
+            }
+            Command::Mux => {
+                warn!("Mux command not supported yet");
+                Err(anyhow!("Mux command not supported"))
+            }
+        }
+    }
+
     /// 连接建立后处理（通用逻辑）
     async fn handle_connection_after_handshake<S>(
         mut stream: S,
@@ -390,27 +518,53 @@ impl VlessServer {
         let user_email = config.get_user_email(&request.uuid);
 
         // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email).await;
+        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email.clone()).await;
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
         stream.write_all(&response.encode()).await?;
 
-        // 根据命令类型处理连接
+        // 根据命令类型和XTLS流控类型处理连接
         let result = match request.command {
             Command::Tcp => {
                 let user_email = config.get_user_email(&request.uuid);
-                Self::handle_tcp_proxy(
-                    stream,
-                    request,
-                    remaining_data,
-                    stats.clone(),
-                    performance_config,
-                    user_email,
-                    buffer_pools,
-                    connection_pools,
-                )
-                .await
+
+                // 检查XTLS流控类型
+                match request.xtls_flow {
+                    XtlsFlow::None => {
+                        // 普通代理模式
+                        debug!("Using normal proxy mode (no XTLS flow)");
+                        Self::handle_tcp_proxy(
+                            stream,
+                            request,
+                            remaining_data,
+                            stats.clone(),
+                            performance_config,
+                            user_email,
+                            buffer_pools,
+                            connection_pools,
+                        )
+                        .await
+                    }
+                    XtlsFlow::XtlsRprxVision | XtlsFlow::XtlsRprxVisionUdp443 => {
+                        // XTLS Vision流控模式
+                        info!("Using XTLS-Rprx-Vision flow control");
+
+                        // Vision处理器需要TLS流
+                        // 由于stream是泛型，我们需要使用特殊处理
+                        Self::handle_tcp_proxy_with_vision(
+                            stream,
+                            request,
+                            remaining_data,
+                            stats.clone(),
+                            performance_config,
+                            user_email,
+                            buffer_pools,
+                            connection_pools,
+                        )
+                        .await
+                    }
+                }
             }
             Command::Udp => {
                 let user_email = config.get_user_email(&request.uuid);
@@ -625,6 +779,140 @@ impl VlessServer {
             initial_data,
         )
         .await
+    }
+
+    /// 处理TCP代理（XTLS-Rprx-Vision流控模式）
+    ///
+    /// # XTLS Vision流控
+    ///
+    /// Vision流控通过检测内层TLS流量，动态切换加密策略：
+    /// 1. Early Data阶段：加密传输VLESS握手数据
+    /// 2. Vision检测：检测客户端发送的数据是否为TLS流量
+    /// 3. Splice传输：检测到TLS后，直接透传（零拷贝）
+    async fn handle_tcp_proxy_with_vision<S>(
+        client_stream: S,
+        request: VlessRequest,
+        initial_data: Bytes,
+        stats: SharedStats,
+        perf_config: PerformanceConfig,
+        user_email: Option<String>,
+        _buffer_pools: Arc<GlobalBufferPools>,
+        connection_pools: Arc<GlobalConnectionPools>,
+    ) -> Result<()>
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+    {
+        let uuid_str = request.uuid.to_string();
+        let email_opt = user_email;
+
+        // 解析目标地址
+        let target_addr = match &request.address {
+            Address::Domain(domain) => {
+                let addr_str = format!("{}:{}", domain, request.port);
+                let resolved = tokio::net::lookup_host(&addr_str)
+                    .await?
+                    .next()
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                resolved
+            }
+            _ => request.address.to_socket_addr(request.port)?,
+        };
+
+        info!(
+            "XTLS Vision: Connecting to target: {} with flow: {:?}",
+            target_addr, request.xtls_flow
+        );
+
+        // 使用连接池获取连接
+        let pooled_connection = connection_pools.get_connection(target_addr).await?;
+        let target_stream = pooled_connection
+            .into_stream()
+            .ok_or_else(|| anyhow!("Failed to get stream from pooled connection"))?;
+
+        // 重要：XTLS Vision需要TLS流
+        // 由于client_stream是泛型S，我们需要特殊处理
+        // 目前使用普通的代理逻辑作为fallback
+        // TODO: 实现完整的Vision流控需要类型转换或架构调整
+
+        info!(
+            "XTLS Vision: Using fallback mode (full implementation requires TLS stream)"
+        );
+
+        // 暂时使用优化的双向传输
+        // 完整的Vision实现需要TlsStream，需要架构调整
+        Self::handle_bidirectional_transfer(
+            client_stream,
+            target_stream,
+            stats,
+            uuid_str,
+            email_opt,
+            perf_config,
+            initial_data,
+        )
+        .await
+    }
+
+    /// 处理TCP代理（XTLS-Rprx-Vision流控模式）- TLS专用路径
+    ///
+    /// 这是Vision流控的TLS专用处理函数，接收TlsStream并调用XTLS模块的高性能转发。
+    ///
+    /// # Vision流程
+    ///
+    /// 1. 连接目标服务器
+    /// 2. 创建Vision处理器进行TLS检测
+    /// 3. 检测到TLS → 使用Splice模式（零拷贝转发）
+    /// 4. 未检测到TLS → 使用加密转发模式
+    async fn handle_tcp_proxy_with_vision_tls(
+        client_stream: TlsStream<TcpStream>,
+        request: VlessRequest,
+        initial_data: Bytes,
+        stats: SharedStats,
+        _perf_config: PerformanceConfig,
+        user_email: Option<String>,
+        connection_pools: Arc<GlobalConnectionPools>,
+    ) -> Result<()> {
+        // 解析目标地址
+        let target_addr = match &request.address {
+            Address::Domain(domain) => {
+                let addr_str = format!("{}:{}", domain, request.port);
+                let resolved = tokio::net::lookup_host(&addr_str)
+                    .await?
+                    .next()
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                resolved
+            }
+            _ => request.address.to_socket_addr(request.port)?,
+        };
+
+        info!(
+            "XTLS Vision (TLS): Connecting to target: {} with flow: {:?}",
+            target_addr, request.xtls_flow
+        );
+
+        // 使用连接池获取连接
+        let pooled_connection = connection_pools.get_connection(target_addr).await?;
+        let target_stream = pooled_connection
+            .into_stream()
+            .ok_or_else(|| anyhow!("Failed to get stream from pooled connection"))?;
+
+        let uuid_str = request.uuid.to_string();
+
+        // 使用新的高性能Vision处理器
+        info!("XTLS Vision (TLS): Using high-performance Vision processor with zero-copy optimization");
+        xtls::handle_vision_proxy(
+            client_stream,
+            target_stream,
+            initial_data,
+            request.xtls_flow,
+            stats,
+            uuid_str,
+            user_email,
+        )
+        .await
+        .context("High-performance Vision proxy failed")?;
+
+        info!("XTLS Vision (TLS): High-performance proxy completed successfully");
+        Ok(())
     }
 
     /// 处理UDP代理（UDP over TCP机制）

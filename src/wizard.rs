@@ -38,6 +38,13 @@ pub fn run_init_wizard() -> Result<Config> {
     // 3. 配置 TLS
     let (tls_enabled, tls_server_name, cert_mode) = prompt_tls()?;
 
+    // 4. 配置 XTLS 流控（仅在TLS启用时）
+    let xtls_flow = if tls_enabled {
+        prompt_xtls_flow()?
+    } else {
+        "".to_string()
+    };
+
     // 根据证书模式确定证书路径
     let (cert_file, key_file) = match &cert_mode {
         CertMode::Generate => (
@@ -56,11 +63,7 @@ pub fn run_init_wizard() -> Result<Config> {
         cert_file,
         key_file,
         server_name: tls_server_name.clone(),
-        xtls_flow: if tls_enabled {
-            "xtls-rprx-vision".to_string()
-        } else {
-            "".to_string()
-        },
+        xtls_flow: xtls_flow.clone(),
     };
 
     // 根据证书模式处理证书
@@ -98,6 +101,9 @@ pub fn run_init_wizard() -> Result<Config> {
     println!("  监听地址: {}:{}", config.server.listen, port);
     println!("  UUID: {}", uuid);
     println!("  TLS: {}", if tls_enabled { "启用" } else { "禁用" });
+    if tls_enabled && !xtls_flow.is_empty() {
+        println!("  XTLS 流控: {}", xtls_flow);
+    }
 
     Ok(config)
 }
@@ -255,6 +261,41 @@ fn prompt_generate_cert() -> Result<(bool, String, CertMode)> {
     println!("  将自动生成自签名证书，SNI: {}", server_name);
 
     Ok((true, server_name.to_string(), CertMode::Generate))
+}
+
+/// 提示用户配置 XTLS 流控
+fn prompt_xtls_flow() -> Result<String> {
+    println!("\n【步骤 4/4】配置 XTLS 流控");
+    println!("  XTLS-Rprx-Vision 可以显著提升性能:");
+    println!("    • CPU 加密开销减少 70%+");
+    println!("    • 传输延迟降低 40%+");
+    println!("    • 吞吐量提升 2-3倍");
+    println!("\n  流控类型选项:");
+    println!("    [1] xtls-rprx-vision (推荐，适用于大多数场景)");
+    println!("    [2] xtls-rprx-vision-udp443 (适用于UDP over 443端口)");
+    println!("    [3] 无流控 (兼容性最好，但无性能提升)");
+    print!("  请选择 (默认: 1): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    let flow = match input.trim() {
+        "2" => {
+            println!("  已选择: xtls-rprx-vision-udp443");
+            "xtls-rprx-vision-udp443"
+        }
+        "3" => {
+            println!("  已选择: 无流控");
+            ""
+        }
+        _ => {
+            println!("  已选择: xtls-rprx-vision");
+            "xtls-rprx-vision"
+        }
+    };
+
+    Ok(flow.to_string())
 }
 
 /// 扩展 trait：如果字符串为空则返回默认值

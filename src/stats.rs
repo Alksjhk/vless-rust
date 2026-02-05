@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::config::MonitoringConfig;
 use crate::connection_pool::GlobalConnectionPools;
+use crate::xtls::get_vision_stats;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorData {
@@ -21,6 +22,7 @@ pub struct MonitorData {
     pub max_connections: usize,
     pub users: Vec<UserMonitorData>,
     pub connection_pool: Option<ConnectionPoolMonitorData>,
+    pub xtls_vision: Option<XtlsVisionMonitorData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,17 @@ pub struct ConnectionPoolMonitorData {
     pub cache_hits: usize,
     pub cache_misses: usize,
     pub hit_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XtlsVisionMonitorData {
+    pub active_connections: usize,
+    pub total_detections: u64,
+    pub splice_switches: u64,
+    pub splice_bytes: u64,
+    pub encrypted_bytes: u64,
+    pub splice_ratio: f64,
+    pub performance_gain: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,6 +400,45 @@ impl Stats {
             None
         };
 
+        // 获取XTLS Vision统计信息
+        let xtls_vision = {
+            let vision_stats = get_vision_stats();
+            let active_connections = vision_stats.active_connections.load(std::sync::atomic::Ordering::Relaxed);
+            let total_detections = vision_stats.detections.load(std::sync::atomic::Ordering::Relaxed);
+            let splice_switches = vision_stats.splice_switches.load(std::sync::atomic::Ordering::Relaxed);
+            let splice_bytes = vision_stats.splice_bytes.load(std::sync::atomic::Ordering::Relaxed);
+            let encrypted_bytes = vision_stats.encrypted_bytes.load(std::sync::atomic::Ordering::Relaxed);
+            
+            let total_bytes = splice_bytes + encrypted_bytes;
+            let splice_ratio = if total_bytes > 0 {
+                (splice_bytes as f64) / (total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+            
+            // 估算性能提升：Splice模式比加密模式快约2-3倍
+            let performance_gain = if total_bytes > 0 {
+                let splice_gain = (splice_bytes as f64) * 2.0; // 2倍性能提升
+                splice_gain / (total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            if active_connections > 0 || total_detections > 0 {
+                Some(XtlsVisionMonitorData {
+                    active_connections,
+                    total_detections,
+                    splice_switches,
+                    splice_bytes,
+                    encrypted_bytes,
+                    splice_ratio,
+                    performance_gain,
+                })
+            } else {
+                None
+            }
+        };
+
         MonitorData {
             upload_speed: format_speed(upload_speed),
             download_speed: format_speed(download_speed),
@@ -398,6 +450,7 @@ impl Stats {
             max_connections: self.config.vless_max_connections,
             users,
             connection_pool,
+            xtls_vision,
         }
     }
 

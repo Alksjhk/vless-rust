@@ -35,7 +35,8 @@ const state = {
   useFallback: false,
   clients: 0,
   config: null,
-  userStats: ref([])
+  userStats: ref([]),
+  visionStats: ref(null)
 }
 
 const DATA_POINTS = 60
@@ -149,6 +150,13 @@ const updateStats = (data) => {
   // 更新用户统计
   if (data.users && Array.isArray(data.users)) {
     state.userStats.value = data.users
+  }
+
+  // 更新XTLS Vision统计
+  if (data.xtls_vision) {
+    state.visionStats.value = data.xtls_vision
+  } else {
+    state.visionStats.value = null
   }
 
   const uploadSpeed = parseSpeed(data.upload_speed)
@@ -437,6 +445,7 @@ export function useWebSocket() {
     trafficHistory: state.trafficHistory,
     isDataSynced: state.isDataSynced,
     userStats: state.userStats,
+    visionStats: state.visionStats,
     reconnect,
     formatBytes,
     getUploadProgress,

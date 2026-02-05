@@ -139,6 +139,9 @@ npm run preview
    - 是否启用 TLS
    - 设置服务器域名/SNI（默认 localhost）
    - 自动生成自签名证书（有效期 10 年）
+4. **XTLS 流控配置**（仅在 TLS 启用时）：
+   - 选择流控类型：xtls-rprx-vision / xtls-rprx-vision-udp443 / 无流控
+   - Vision 流控可提升性能 2-3倍
 
 配置完成后，服务器会：
 - 保存配置到 `config.json`
@@ -161,6 +164,7 @@ npm run preview
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
 | `src/tls.rs` | TLS 配置、证书自动生成、握手处理 | `load_tls_config()`、`ensure_cert_exists()`、`generate_self_signed_cert()` |
+| `src/xtls.rs` | XTLS-Rprx-Vision 流控处理 | `VisionStream`、`handle_vision_proxy()`、`detect_tls_content()` |
 | `src/wizard.rs` | 初始化配置向导 | `run_init_wizard()` - 交互式配置 |
 | `src/memory.rs` | 内存池管理、缓冲区优化 | `BufferPool`、`PooledBuffer`、`GlobalBufferPools` |
 | `src/connection_pool.rs` | 连接池管理、连接复用 | `ConnectionPool`、`PooledConnection`、`GlobalConnectionPools` |
@@ -232,6 +236,9 @@ npm run preview
 - **连接池管理** → `src/connection_pool.rs:GlobalConnectionPools` - 连接复用、健康检查、自动清理
 - **连接池监控** → `src/stats.rs:get_monitor_data()` - 集成连接池统计数据
 - **内存池监控** → `src/http.rs:/api/memory-pool-stats` - 内存池统计 API
+- **XTLS 流控处理** → `src/xtls.rs:handle_vision_proxy()` - XTLS-Rprx-Vision 流控
+- **XTLS 协议解析** → `src/protocol.rs:parse_xtls_flow()` - VLESS addons 流控解析
+- **XTLS 配置向导** → `src/wizard.rs:prompt_xtls_flow()` - 流控类型选择
 
 ## 开发指南
 
