@@ -25,6 +25,7 @@ impl UtcTime {
     /// 格式化为 RFC3339 字符串
     ///
     /// 示例: "2024-02-06T12:34:56Z"
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_rfc3339(&self) -> String {
         format_rfc3339(self.timestamp)
     }
@@ -89,6 +90,7 @@ fn format_rfc3339(timestamp: i64) -> String {
     // 判断是否为闰年
     let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 
+    #[allow(clippy::needless_range_loop)]
     for m in 0..12 {
         let days_in_month = if m == 1 && is_leap {
             29 // 二月闰年

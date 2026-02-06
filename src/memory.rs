@@ -2,6 +2,9 @@
 //!
 //! 替代 sysinfo 库，提供进程内存和系统总内存获取功能
 
+#[cfg(target_os = "linux")]
+use std::fs;
+
 /// 获取当前进程的内存使用量（字节）
 ///
 /// 平台支持：
@@ -108,8 +111,10 @@ fn get_process_memory_windows() -> u64 {
 
     unsafe {
         let handle = GetCurrentProcess();
-        let mut info = PROCESS_MEMORY_COUNTERS::default();
-        info.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let mut info = PROCESS_MEMORY_COUNTERS {
+            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            ..Default::default()
+        };
 
         if GetProcessMemoryInfo(handle, &mut info, info.cb).is_ok() {
             return info.WorkingSetSize as u64;
@@ -126,8 +131,10 @@ fn get_total_memory_windows() -> u64 {
     };
 
     unsafe {
-        let mut status = MEMORYSTATUSEX::default();
-        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        let mut status = MEMORYSTATUSEX {
+            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
 
         if GlobalMemoryStatusEx(&mut status).is_ok() {
             return status.ullTotalPhys;

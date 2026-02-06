@@ -69,7 +69,7 @@ impl WebSocketManager {
     }
 
     pub async fn remove_connection(&mut self, id: usize) {
-        if let Some(_) = self.connections.remove(&id) {
+        if self.connections.remove(&id).is_some() {
             tracing::info!("WebSocket connection removed: id={}, total={}", id, self.connections.len());
         }
     }
@@ -79,7 +79,7 @@ impl WebSocketManager {
         let mut dead_connections = Vec::new();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.send(Message::Text(json.clone())) {
+            if conn.tx.send(Message::Text(json.clone())).is_err() {
                 dead_connections.push(*id);
             }
         }
@@ -92,7 +92,7 @@ impl WebSocketManager {
         let now = UtcTime::now();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.send(Message::Ping(vec![])) {
+            if conn.tx.send(Message::Ping(vec![])).is_err() {
                 dead_ids.push(*id);
                 continue;
             }

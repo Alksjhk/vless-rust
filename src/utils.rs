@@ -13,7 +13,7 @@ pub async fn get_public_ip() -> Result<String> {
         .context("Failed to create HTTP client")?;
 
     // API 列表（按优先级排序）
-    let apis = vec![
+    let apis = [
         "https://api.ipify.org",
         "https://icanhazip.com",
         "https://checkip.amazonaws.com",
@@ -32,10 +32,8 @@ pub async fn get_public_ip() -> Result<String> {
         .context("IP detection timeout after 10 seconds")?;
 
     // 查找第一个成功的结果
-    for result in &results {
-        if let Ok(ip) = result {
-            return Ok(ip.clone());
-        }
+    if let Some(ip) = results.iter().find_map(|r| r.as_ref().ok()) {
+        return Ok(ip.clone());
     }
 
     // 收集第一个错误原因以便调试
@@ -56,7 +54,7 @@ pub fn generate_vless_url(
     port: u16,
     email: Option<&str>,
 ) -> String {
-    let params = vec![
+    let params = [
         ("encryption", "none"),
         ("security", "none"),
         ("type", "tcp"),

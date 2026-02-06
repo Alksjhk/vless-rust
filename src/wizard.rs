@@ -106,7 +106,7 @@ impl ConfigWizard {
 
             println!("\n当前用户数: {}", users.len());
 
-            if users.len() >= 1 {
+            if !users.is_empty() {
                 print!("是否继续添加用户？[y/N]: ");
                 io::stdout().flush()?;
 
@@ -176,25 +176,21 @@ impl ConfigWizard {
         println!("  邮箱地址用于标识用户，方便管理。");
         println!("  可以在客户端显示，帮助识别连接。");
 
-        let email = loop {
-            print!("  请输入邮箱地址 [默认: {}]: ", default_email);
-            io::stdout().flush()?;
+        print!("  请输入邮箱地址 [默认: {}]: ", default_email);
+        io::stdout().flush()?;
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let input = input.trim();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
 
-            if input.is_empty() {
-                break default_email.clone();
-            }
-
+        let email = if input.is_empty() {
+            default_email.clone()
+        } else {
             // 简单验证邮箱格式
-            if input.contains('@') && input.contains('.') {
-                break input.to_string();
+            if !(input.contains('@') && input.contains('.')) {
+                println!("  ⚠ 邮箱格式似乎不正确，但仍然接受");
             }
-
-            println!("  ⚠ 邮箱格式似乎不正确，但仍然接受");
-            break input.to_string();
+            input.to_string()
         };
 
         // 验证 UUID 唯一性
