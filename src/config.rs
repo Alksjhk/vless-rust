@@ -124,10 +124,15 @@ impl Config {
         let addr_str = format!("{}:{}", self.server.listen, self.server.port);
         Ok(addr_str.parse()?)
     }
+}
 
-    /// 创建默认配置
-    pub fn default() -> Self {
-        Self {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
             server: ServerSettings {
                 listen: "0.0.0.0".to_string(),
                 port: 443,
@@ -140,17 +145,7 @@ impl Config {
             ],
             monitoring: MonitoringConfig::default(),
             performance: PerformanceConfig::default(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_serialization() {
-        let config = Config::default();
+        };
         let json = config.to_json().unwrap();
         let parsed = Config::from_json(&json).unwrap();
 

@@ -1,11 +1,11 @@
 [package]
-name = "vless"
+name = "vless-rust"
 version = "0.1.0"
 edition = "2021"
-default-run = "vless"
+default-run = "vless-rust"
 
 [[bin]]
-name = "vless"
+name = "vless-rust"
 path = "src/main.rs"
 
 
@@ -28,6 +28,7 @@ futures-util = "0.3"
 base64 = "0.21"
 sha1 = "0.10"
 rust-embed = { version = "8.0", features = ["include-exclude"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 
 [build-dependencies]
 prost-build = "0.12"

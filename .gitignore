@@ -7,6 +7,12 @@ frontend/dist
 static
 frontend/.DS_Store
 
+# Compiled binaries (project root)
+vless-rust
+vless-rust.exe
+vless-rust-debug
+vless-rust-debug.exe
+
 plan.md
 .vscode
 

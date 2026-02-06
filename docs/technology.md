@@ -15,6 +15,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **日志**: tracing + tracing-subscriber
 - **静态资源嵌入**: rust-embed
 - **系统信息**: sysinfo
+- **HTTP 客户端**: reqwest (rustls-tls)
 
 ### 前端
 - **框架**: Vue 3 (Composition API)
@@ -78,13 +79,15 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器 |
+| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器、IP检测、配置向导触发 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
 | `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
+| `src/utils.rs` | 工具函数、IP检测、URL生成 | `get_public_ip()`、`generate_vless_url()` |
+| `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()`、`prompt_listen_address()`、`prompt_port()`、`prompt_users()` |
 
 ### 前端核心文件
 
@@ -129,6 +132,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 **需要修改/查找...**
 
 - **服务器启动流程** → `src/main.rs:main()`
+- **首次配置向导** → `src/wizard.rs:ConfigWizard::run()`
 - **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`
 - **VLESS 协议解析** → `src/protocol.rs:VlessRequest::decode()`
 - **用户认证逻辑** → `src/server.rs:handle_connection()`

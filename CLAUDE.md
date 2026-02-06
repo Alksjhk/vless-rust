@@ -89,6 +89,13 @@ npm run preview
 - **批量统计**：累积到64KB才更新统计，减少锁竞争
 - **可配置缓冲区**：默认128KB，适配高带宽场景
 
+**外网 IP 自动检测：**
+- 服务器启动时并发请求多个 API 获取外网 IP
+- 支持 5 个备用 API，任一成功即返回
+- 单 API 5 秒超时，整体 10 秒超时
+- 检测失败时使用占位符，不影响服务器启动
+- 自动为所有用户生成 VLESS:// 协议链接并打印到日志
+
 ### 配置文件结构
 
 ```json
@@ -135,13 +142,14 @@ npm run preview
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器 |
+| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器、IP检测 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
 | `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
+| `src/utils.rs` | 工具函数、IP检测、URL生成 | `get_public_ip()`、`generate_vless_url()` |
 
 ### 前端核心文件
 
@@ -166,7 +174,7 @@ npm run preview
 | 文件路径 | 核心功能 | 说明 |
 |---------|---------|------|
 | `Cargo.toml` | Rust 项目配置 | 依赖项、编译优化、二进制配置 |
-| `.cargo/config.toml` | Cargo 编译配置 | Windows 静态链接选项 |
+| `.cargo/config.toml` | Cargo 编译配置 | Windows 静态链接选项、Linux musl 静态链接 |
 | `config.json` | 运行时配置 | 服务器、用户、监控、性能参数（自动生成） |
 
 ### 文档文件
@@ -179,6 +187,8 @@ npm run preview
 | `docs/technology.md` | 技术文档 | 架构设计、实现逻辑、流程说明 |
 | `docs/api.md` | API 文档 | 接口定义、请求/响应格式 |
 | `docs/2026-02-02-监控和性能优化.md` | 更新日志 | 监控优化、性能提升记录 |
+| `docs/2026-02-05-外网IP自动获取和VLESS链接生成.md` | 更新日志 | 外网 IP 检测和链接生成 |
+| `docs/2026-02-06-移除Docker支持.md` | 更新日志 | 移除 Docker 支持记录 |
 | `AGENTS.md` | AI 角色定义 | 项目助手行为规范 |
 
 ### 功能快速查找

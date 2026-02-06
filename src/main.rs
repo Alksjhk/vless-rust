@@ -4,6 +4,8 @@ mod config;
 mod stats;
 mod http;
 mod ws;
+mod utils;
+mod wizard;
 
 use anyhow::Result;
 use config::Config;
@@ -13,7 +15,7 @@ use ws::WebSocketManager;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,11 +34,13 @@ async fn main() -> Result<()> {
             Config::from_json(&content)?
         }
         Err(_) => {
-            info!("Config file not found, creating default config at {}", config_path);
-            let default_config = Config::default();
-            let json = default_config.to_json()?;
+            info!("Config file not found at {}", config_path);
+            info!("Starting configuration wizard...");
+            let config = wizard::ConfigWizard::run()?;
+            let json = config.to_json()?;
             std::fs::write(&config_path, json)?;
-            default_config
+            info!("Config saved to {}", config_path);
+            config
         }
     };
 
@@ -84,6 +88,40 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         start_stats_persistence(stats_persistence, config_path).await;
     });
+
+    // 获取外网 IP 并生成 VLESS 链接
+    info!("Detecting public IP...");
+    match utils::get_public_ip().await {
+        Ok(public_ip) => {
+            info!("Public IP: {}", public_ip);
+            info!("\n========== VLESS Connection Links ==========");
+            for user in &config.users {
+                let url = utils::generate_vless_url(
+                    &user.uuid,
+                    &public_ip,
+                    config.server.port,
+                    user.email.as_deref(),
+                );
+                info!("{}", url);
+            }
+            info!("==========================================\n");
+        }
+        Err(e) => {
+            warn!("Failed to detect public IP: {}", e);
+            info!("\n========== VLESS Connection Links ==========");
+            info!("Please replace YOUR_SERVER_IP with your actual public IP:");
+            for user in &config.users {
+                let url = utils::generate_vless_url(
+                    &user.uuid,
+                    "YOUR_SERVER_IP",
+                    config.server.port,
+                    user.email.as_deref(),
+                );
+                info!("{}", url);
+            }
+            info!("==========================================\n");
+        }
+    }
 
     // 启动服务器
     let performance_config = config.performance.clone();
