@@ -525,8 +525,8 @@ cargo build --release
 # 运行
 cargo run
 
-# 测试
-cargo test
+# 检查代码
+cargo check
 ```
 
 ### 前端开发

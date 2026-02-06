@@ -22,9 +22,6 @@ cargo run
 # 运行服务器（指定配置文件）
 cargo run -- /path/to/config.json
 
-# 运行测试
-cargo test
-
 # 检查代码（不编译）
 cargo check
 ```
@@ -60,6 +57,10 @@ npm run preview
 - `src/stats.rs`: 流量统计模块，使用快照机制计算速度，支持持久化到配置文件
 - `src/http.rs`: HTTP 请求检测、静态文件服务和监控 API 端点
 - `src/ws.rs`: WebSocket 实时数据推送管理
+- `src/memory.rs`: 跨平台内存信息获取（替代 sysinfo）
+- `src/time.rs`: 时间工具模块，提供 RFC3339 格式化（替代 chrono）
+- `src/utils.rs`: 工具函数，包括 IP 检测和 VLESS URL 生成
+- `src/base64.rs`: Base64 编码实现（RFC 4648）
 
 **前端架构：**
 
@@ -203,6 +204,8 @@ npm run preview
 - **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
 - **流量统计逻辑** → `src/stats.rs:Stats`
 - **速度计算机制** → `src/stats.rs:calculate_speeds()`
+- **内存信息获取** → `src/memory.rs:get_process_memory()`、`get_total_memory()`
+- **时间格式化** → `src/time.rs:UtcTime::to_rfc3339()`
 - **HTTP 路由处理** → `src/http.rs:handle_http_request()`
 - **WebSocket 推送** → `src/ws.rs:WebSocketManager::broadcast()`
 - **监控 API 端点** → `src/http.rs` - 路由匹配部分

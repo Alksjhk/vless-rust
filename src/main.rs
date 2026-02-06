@@ -6,6 +6,9 @@ mod http;
 mod ws;
 mod utils;
 mod wizard;
+mod base64;
+mod memory;
+mod time;
 
 use anyhow::Result;
 use config::Config;

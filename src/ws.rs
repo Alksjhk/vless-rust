@@ -1,8 +1,9 @@
 use crate::stats::{MonitorData, SharedStats, SpeedHistoryResponse};
 use crate::config::MonitoringConfig;
+use crate::time::UtcTime;
 use anyhow::{Result, anyhow};
-use futures_channel::mpsc::UnboundedSender;
-use futures_util::{stream::StreamExt, SinkExt};
+use tokio::sync::mpsc::UnboundedSender;
+use futures_util::{stream::StreamExt, sink::SinkExt};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,14 +27,14 @@ pub type WsSender = UnboundedSender<Message>;
 
 pub struct WebSocketConnection {
     pub tx: WsSender,
-    pub last_activity: Arc<tokio::sync::Mutex<chrono::DateTime<chrono::Utc>>>,
+    pub last_activity: Arc<tokio::sync::Mutex<UtcTime>>,
 }
 
 impl WebSocketConnection {
     pub fn new(tx: WsSender) -> Self {
         Self {
             tx,
-            last_activity: Arc::new(tokio::sync::Mutex::new(chrono::Utc::now())),
+            last_activity: Arc::new(tokio::sync::Mutex::new(UtcTime::now())),
         }
     }
 }
@@ -78,7 +79,7 @@ impl WebSocketManager {
         let mut dead_connections = Vec::new();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.unbounded_send(Message::Text(json.clone())) {
+            if let Err(_) = conn.tx.send(Message::Text(json.clone())) {
                 dead_connections.push(*id);
             }
         }
@@ -88,10 +89,10 @@ impl WebSocketManager {
 
     pub async fn cleanup_stale_connections(&mut self) -> Vec<usize> {
         let mut dead_ids = Vec::new();
-        let now = chrono::Utc::now();
+        let now = UtcTime::now();
 
         for (id, conn) in &self.connections {
-            if let Err(_) = conn.tx.unbounded_send(Message::Ping(vec![])) {
+            if let Err(_) = conn.tx.send(Message::Ping(vec![])) {
                 dead_ids.push(*id);
                 continue;
             }
@@ -99,8 +100,8 @@ impl WebSocketManager {
             // Check heartbeat timeout
             if let Ok(last_activity) = conn.last_activity.try_lock() {
                 let duration = now.signed_duration_since(*last_activity);
-                if duration.num_seconds() > self.config.websocket_heartbeat_timeout as i64 {
-                    tracing::warn!("WebSocket connection {} timeout after {}s", id, duration.num_seconds());
+                if duration > self.config.websocket_heartbeat_timeout as i64 {
+                    tracing::warn!("WebSocket connection {} timeout after {}s", id, duration);
                     dead_ids.push(*id);
                 }
             }
@@ -281,7 +282,7 @@ pub async fn handle_websocket_connection(
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     // Create channel for sending messages
-    let (tx, mut rx) = futures_channel::mpsc::unbounded::<Message>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
 
     // Add connection to manager
     let conn = WebSocketConnection::new(tx);
@@ -331,14 +332,14 @@ pub async fn handle_websocket_connection(
     // Update initial activity
     {
         let mut last_activity = conn_ref.lock().await;
-        *last_activity = chrono::Utc::now();
+        *last_activity = UtcTime::now();
     }
 
     // Handle incoming messages and channel messages simultaneously
     loop {
         tokio::select! {
             // Handle messages from the broadcast channel
-            Some(msg) = rx.next() => {
+            Some(msg) = rx.recv() => {
                 if ws_sender.send(msg).await.is_err() {
                     tracing::warn!("Failed to send message to connection {}, closing", conn_id);
                     break;
@@ -352,14 +353,14 @@ pub async fn handle_websocket_connection(
                         // Update activity on ping
                         {
                             let mut last_activity = conn_ref.lock().await;
-                            *last_activity = chrono::Utc::now();
+                            *last_activity = UtcTime::now();
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
                         // Update activity on pong
                         {
                             let mut last_activity = conn_ref.lock().await;
-                            *last_activity = chrono::Utc::now();
+                            *last_activity = UtcTime::now();
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
@@ -402,7 +403,7 @@ fn extract_websocket_key(request: &str) -> Result<String> {
 
 fn compute_accept_key(key: &str) -> String {
     use sha1::{Digest, Sha1};
-    use base64::Engine;
+    use crate::base64::encode;
     const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     let mut hasher = Sha1::new();
@@ -410,5 +411,5 @@ fn compute_accept_key(key: &str) -> String {
     hasher.update(GUID.as_bytes());
     let result = hasher.finalize();
 
-    base64::engine::general_purpose::STANDARD.encode(&result[..])
+    encode(&result)
 }

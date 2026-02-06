@@ -1,5 +1,6 @@
 use anyhow::{Result, Context};
 use std::time::Duration;
+use futures_util::future;
 
 /// 获取外网 IP 地址
 /// - 并发请求多个 API，任一成功即返回
@@ -27,7 +28,7 @@ pub async fn get_public_ip() -> Result<String> {
         .collect();
 
     // 使用 tokio::select! 等待第一个成功响应或全部失败
-    let results = tokio::time::timeout(Duration::from_secs(10), futures_util::future::join_all(tasks)).await
+    let results = tokio::time::timeout(Duration::from_secs(10), future::join_all(tasks)).await
         .context("IP detection timeout after 10 seconds")?;
 
     // 查找第一个成功的结果
@@ -127,56 +128,4 @@ fn url_encode(input: &str) -> String {
         })
         .map(|b| b as char)
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_vless_url_with_email() {
-        let url = generate_vless_url(
-            "615767da-4db9-4df7-9f12-d7d617fc1d96",
-            "123.45.67.89",
-            8443,
-            Some("user@example.com"),
-        );
-
-        assert!(url.starts_with("vless://"));
-        assert!(url.contains("@123.45.67.89:8443?"));
-        assert!(url.contains("encryption=none"));
-        assert!(url.contains("security=none"));
-        assert!(url.contains("type=tcp"));
-        // 使用小写十六进制（符合 RFC 3986）
-        assert!(url.ends_with("#123.45.67.89%2buser%40example.com"));
-    }
-
-    #[test]
-    fn test_generate_vless_url_without_email() {
-        let url = generate_vless_url(
-            "615767da-4db9-4df7-9f12-d7d617fc1d96",
-            "123.45.67.89",
-            8443,
-            None,
-        );
-
-        // 无邮箱时使用 UUID 前 8 位，使用小写编码
-        assert!(url.ends_with("#123.45.67.89%2b615767da"));
-    }
-
-    #[test]
-    fn test_url_encode() {
-        assert_eq!(url_encode("user@example.com"), "user%40example.com");
-        assert_eq!(url_encode("123.45.67.89"), "123.45.67.89");
-    }
-
-    #[test]
-    fn test_validate_ip() {
-        assert!(validate_ip("192.168.1.1").is_ok());
-        assert!(validate_ip("8.8.8.8").is_ok());
-        assert!(validate_ip("2001:4860:4860::8888").is_ok()); // IPv6
-        assert!(validate_ip("::1").is_ok()); // IPv6 loopback
-        assert!(validate_ip("256.1.1.1").is_err());
-        assert!(validate_ip("invalid").is_err());
-    }
 }

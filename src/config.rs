@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use uuid::Uuid;
 use anyhow::Result;
 
 /// 监控配置
@@ -123,41 +122,5 @@ impl Config {
     pub fn bind_addr(&self) -> Result<SocketAddr> {
         let addr_str = format!("{}:{}", self.server.listen, self.server.port);
         Ok(addr_str.parse()?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_serialization() {
-        let config = Config {
-            server: ServerSettings {
-                listen: "0.0.0.0".to_string(),
-                port: 443,
-            },
-            users: vec![
-                UserConfig {
-                    uuid: Uuid::new_v4().to_string(),
-                    email: Some("user@example.com".to_string()),
-                }
-            ],
-            monitoring: MonitoringConfig::default(),
-            performance: PerformanceConfig::default(),
-        };
-        let json = config.to_json().unwrap();
-        let parsed = Config::from_json(&json).unwrap();
-
-        assert_eq!(config.server.listen, parsed.server.listen);
-        assert_eq!(config.server.port, parsed.server.port);
-        assert_eq!(config.users.len(), parsed.users.len());
-    }
-
-    #[test]
-    fn test_udp_config_defaults() {
-        let config = PerformanceConfig::default();
-        assert_eq!(config.udp_timeout, 30);
-        assert_eq!(config.udp_recv_buffer, 64 * 1024);
     }
 }

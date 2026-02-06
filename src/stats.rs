@@ -3,8 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
-use chrono::Utc;
-use sysinfo::System;
 
 use crate::config::MonitoringConfig;
 
@@ -68,9 +66,7 @@ pub struct Stats {
     active_connections: usize,
     start_time: Instant,
     speed_history: Vec<SpeedSnapshot>,
-    system: System,
     config_path: String,
-    current_pid: u32,
     last_upload_snapshot: Option<SpeedSnapshot>,
     last_download_snapshot: Option<SpeedSnapshot>,
     config: MonitoringConfig,
@@ -79,10 +75,6 @@ pub struct Stats {
 
 impl Stats {
     pub fn new(config_path: String, monitoring_config: MonitoringConfig) -> Self {
-        let mut system = System::new_all();
-        system.refresh_all();
-
-        let current_pid = std::process::id();
         let now = Instant::now();
 
         Self {
@@ -91,9 +83,7 @@ impl Stats {
             active_connections: 0,
             start_time: now,
             speed_history: Vec::new(),
-            system,
             config_path,
-            current_pid,
             last_upload_snapshot: Some(SpeedSnapshot {
                 upload_bytes: 0,
                 download_bytes: 0,
@@ -186,21 +176,14 @@ impl Stats {
     }
 
     pub fn get_memory_usage(&mut self) -> u64 {
-        self.system.refresh_processes();
-        if let Some(process) = self.system.process(sysinfo::Pid::from_u32(self.current_pid)) {
-            process.memory()
-        } else {
-            0
-        }
+        crate::memory::get_process_memory()
     }
 
     pub fn get_total_memory(&mut self) -> u64 {
-        self.system.refresh_memory();
-        self.system.total_memory()
+        crate::memory::get_total_memory()
     }
 
     pub fn calculate_speeds(&mut self) -> (f64, f64) {
-        self.system.refresh_memory();
         let now = Instant::now();
 
         let (upload_speed, download_speed) = if let Some(last_snapshot) = self.last_upload_snapshot.take() {
@@ -394,7 +377,7 @@ impl Stats {
         let monitor = serde_json::json!({
             "total_upload_bytes": self.total_upload_bytes,
             "total_download_bytes": self.total_download_bytes,
-            "last_update": Utc::now().to_rfc3339(),
+            "last_update": crate::time::utc_now_rfc3339(),
             "users": serde_json::Value::from(users_data)
         });
 
