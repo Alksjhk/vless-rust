@@ -2,10 +2,10 @@
 name = "vless-rust"
 version = "0.1.0"
 edition = "2021"
-default-run = "vless-rust"
+default-run = "vless"
 
 [[bin]]
-name = "vless-rust"
+name = "vless"
 path = "src/main.rs"
 
 
