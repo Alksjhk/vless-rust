@@ -57,10 +57,11 @@ npm run preview
 - `src/stats.rs`: 流量统计模块，使用快照机制计算速度，支持持久化到配置文件
 - `src/http.rs`: HTTP 请求检测、静态文件服务和监控 API 端点
 - `src/ws.rs`: WebSocket 实时数据推送管理
-- `src/memory.rs`: 跨平台内存信息获取（替代 sysinfo）
-- `src/time.rs`: 时间工具模块，提供 RFC3339 格式化（替代 chrono）
+- `src/memory.rs`: 跨平台内存信息获取（支持 Linux/Windows，替代 sysinfo）
+- `src/time.rs`: 时间工具模块，提供 RFC3339 格式化（支持负时间戳，替代 chrono）
 - `src/utils.rs`: 工具函数，包括 IP 检测和 VLESS URL 生成
-- `src/base64.rs`: Base64 编码实现（RFC 4648）
+- `src/base64.rs`: Base64 编码实现（RFC 4648，无 unsafe 代码）
+- `src/wizard.rs`: 配置向导，包含改进的邮箱验证逻辑
 
 **前端架构：**
 

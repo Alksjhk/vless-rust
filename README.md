@@ -236,6 +236,7 @@ npm run dev
 #### 服务器配置
 - `listen`: 监听地址，通常设为 `0.0.0.0` 监听所有接口
 - `port`: 监听端口（建议使用 443 或 8443）
+- `public_ip`: 公网 IP 地址（可选），配置后将不再自动检测，适用于无法访问外网 API 的环境
 
 #### 用户配置
 - `uuid`: 用户唯一标识符，必须是有效的UUID格式
@@ -273,7 +274,12 @@ npm run dev
 - **静态链接**: Windows CRT 静态链接，零依赖运行，无需 VC++ 运行时库
 - **WebSocket广播**: 支持最大300个并发WebSocket连接，每秒推送更新
 - **智能降级**: WebSocket连接失败时自动切换到API轮询模式
-- **IP自动检测**: 启动时并发请求多个API获取外网IP，自动生成VLESS连接链接
+- **IP自动检测**: 启动时并发请求3个IPv4专用API获取公网地址
+  - 使用 ipv4.icanhazip.com、checkip.amazonaws.com、v4.ident.me
+  - 只接受 IPv4 地址（自动过滤 IPv6）
+  - 使用 native-tls 确保网络兼容性
+  - 支持配置文件手动指定 IP，跳过自动检测
+  - 检测失败时提供详细诊断提示
 
 ## 部署说明
 

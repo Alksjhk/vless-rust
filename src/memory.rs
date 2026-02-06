@@ -10,7 +10,6 @@ use std::fs;
 /// 平台支持：
 /// - Linux: 读取 /proc/self/status 的 VmRSS 字段
 /// - Windows: 使用 GetProcessMemoryInfo API
-/// - macOS: 使用 task_info API
 pub fn get_process_memory() -> u64 {
     #[cfg(target_os = "linux")]
     {
@@ -22,12 +21,7 @@ pub fn get_process_memory() -> u64 {
         get_process_memory_windows()
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        get_process_memory_macos()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         // 其他平台返回 0
         0
@@ -39,7 +33,6 @@ pub fn get_process_memory() -> u64 {
 /// 平台支持：
 /// - Linux: 读取 /proc/meminfo 的 MemTotal 字段
 /// - Windows: 使用 GlobalMemoryStatusEx API
-/// - macOS: 使用 host_statistics API
 pub fn get_total_memory() -> u64 {
     #[cfg(target_os = "linux")]
     {
@@ -51,12 +44,7 @@ pub fn get_total_memory() -> u64 {
         get_total_memory_windows()
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        get_total_memory_macos()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         // 其他平台返回 0
         0
@@ -66,38 +54,50 @@ pub fn get_total_memory() -> u64 {
 // Linux 平台实现
 #[cfg(target_os = "linux")]
 fn get_process_memory_linux() -> u64 {
-    if let Ok(content) = fs::read_to_string("/proc/self/status") {
-        for line in content.lines() {
-            if line.starts_with("VmRSS:") {
-                // VmRSS:	  12345 kB
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(kb) = parts[1].parse::<u64>() {
-                        return kb * 1024; // 转换为字节
+    match fs::read_to_string("/proc/self/status") {
+        Ok(content) => {
+            for line in content.lines() {
+                if line.starts_with("VmRSS:") {
+                    // VmRSS:	  12345 kB
+                    if let Some(kb_str) = line.split_whitespace().nth(1) {
+                        if let Ok(kb) = kb_str.parse::<u64>() {
+                            return kb * 1024; // 转换为字节
+                        }
                     }
                 }
             }
+            tracing::warn!("Failed to parse VmRSS from /proc/self/status");
+            0
+        }
+        Err(e) => {
+            tracing::error!("Failed to read /proc/self/status: {}", e);
+            0
         }
     }
-    0
 }
 
 #[cfg(target_os = "linux")]
 fn get_total_memory_linux() -> u64 {
-    if let Ok(content) = fs::read_to_string("/proc/meminfo") {
-        for line in content.lines() {
-            if line.starts_with("MemTotal:") {
-                // MemTotal:       16384000 kB
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(kb) = parts[1].parse::<u64>() {
-                        return kb * 1024; // 转换为字节
+    match fs::read_to_string("/proc/meminfo") {
+        Ok(content) => {
+            for line in content.lines() {
+                if line.starts_with("MemTotal:") {
+                    // MemTotal:       16384000 kB
+                    if let Some(kb_str) = line.split_whitespace().nth(1) {
+                        if let Ok(kb) = kb_str.parse::<u64>() {
+                            return kb * 1024; // 转换为字节
+                        }
                     }
                 }
             }
+            tracing::warn!("Failed to parse MemTotal from /proc/meminfo");
+            0
+        }
+        Err(e) => {
+            tracing::error!("Failed to read /proc/meminfo: {}", e);
+            0
         }
     }
-    0
 }
 
 // Windows 平台实现
@@ -143,54 +143,3 @@ fn get_total_memory_windows() -> u64 {
     0
 }
 
-// macOS 平台实现
-#[cfg(target_os = "macos")]
-fn get_process_memory_macos() -> u64 {
-    use libc::{c_int, task_info, task_basic_info, mach_task_self, task_t, mach_port_t};
-
-    unsafe {
-        let task: task_t = mach_task_self();
-        let mut info: task_basic_info = std::mem::zeroed();
-        let mut count = mach_task_self() as u32;
-
-        let result = task_info(
-            task,
-            4, // TASK_BASIC_INFO
-            &mut info as *mut _ as *mut _,
-            &mut count as *mut _ as *mut _,
-        );
-
-        if result == 0 {
-            return info.resident_size as u64;
-        }
-    }
-    0
-}
-
-#[cfg(target_os = "macos")]
-fn get_total_memory_macos() -> u64 {
-    use libc::{c_int, host_statistics, host_info, vm_statistics, mach_host_self, host_t};
-
-    unsafe {
-        let host: host_t = mach_host_self();
-        let mut info: vm_statistics = std::mem::zeroed();
-        let mut count = std::mem::size_of::<vm_statistics>() as c_int;
-
-        let result = host_statistics(
-            host,
-            2, // HOST_VM_INFO
-            &mut info as *mut _ as *mut _,
-            &mut count as *mut _ as *mut _,
-        );
-
-        if result == 0 {
-            let page_size = 4096u64; // macOS 默认页面大小
-            return (info.active_count as u64
-                + info.inactive_count as u64
-                + info.wire_count as u64
-                + info.free_count as u64)
-                * page_size;
-        }
-    }
-    0
-}

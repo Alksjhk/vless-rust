@@ -29,7 +29,7 @@ impl ConfigWizard {
 
         // 创建配置
         let config = Config {
-            server: ServerSettings { listen, port },
+            server: ServerSettings { listen, port, public_ip: None },
             users,
             monitoring: Default::default(),
             performance: Default::default(),
@@ -186,9 +186,9 @@ impl ConfigWizard {
         let email = if input.is_empty() {
             default_email.clone()
         } else {
-            // 简单验证邮箱格式
-            if !(input.contains('@') && input.contains('.')) {
-                println!("  ⚠ 邮箱格式似乎不正确，但仍然接受");
+            // 验证邮箱格式（基本格式检查）
+            if !is_valid_email_format(input) {
+                println!("  ⚠ 邮箱格式不正确，但仍然接受");
             }
             input.to_string()
         };
@@ -206,4 +206,36 @@ impl ConfigWizard {
 
         Ok(UserConfig { uuid, email: Some(email) })
     }
+}
+
+/// 验证邮箱格式（基本检查）
+///
+/// 检查规则：
+/// - 必须包含 @ 符号
+/// - @ 后面必须包含 .
+/// - @ 和 . 不能在开头或结尾
+/// - @ 和 . 之间必须有字符
+fn is_valid_email_format(email: &str) -> bool {
+    let at_pos = match email.find('@') {
+        Some(pos) => pos,
+        None => return false,
+    };
+
+    // @ 不能在开头或结尾
+    if at_pos == 0 || at_pos == email.len() - 1 {
+        return false;
+    }
+
+    // @ 后面必须有 .
+    let dot_pos = match email[at_pos + 1..].find('.') {
+        Some(pos) => at_pos + 1 + pos,
+        None => return false,
+    };
+
+    // . 不能在 @ 后面紧接着，也不能在最后
+    if dot_pos == at_pos + 1 || dot_pos == email.len() - 1 {
+        return false;
+    }
+
+    true
 }

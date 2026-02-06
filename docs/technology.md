@@ -14,8 +14,10 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **WebSocket**: tokio-tungstenite
 - **日志**: tracing + tracing-subscriber
 - **静态资源嵌入**: rust-embed
-- **系统信息**: sysinfo
-- **HTTP 客户端**: reqwest (rustls-tls)
+- **内存信息**: 自研跨平台模块 (Linux/Windows)
+- **时间处理**: 自研 RFC3339 格式化模块
+- **Base64 编码**: 自研实现 (RFC 4648)
+- **HTTP 客户端**: reqwest (native-tls)
 
 ### 前端
 - **框架**: Vue 3 (Composition API)
@@ -86,7 +88,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
 | `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
 | `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
-| `src/utils.rs` | 工具函数、IP检测、URL生成 | `get_public_ip()`、`generate_vless_url()` |
+| `src/utils.rs` | 工具函数、IP检测、URL生成 | `get_public_ip()`、`get_public_ip_with_diagnostic()`、`generate_vless_url()`、`fetch_ip_from_api()`、`validate_ipv4()` |
 | `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()`、`prompt_listen_address()`、`prompt_port()`、`prompt_users()` |
 
 ### 前端核心文件
@@ -307,6 +309,73 @@ X-XSS-Protection: 1; mode=block
 - 使用 serde 默认值
 - 配置文件不存在时自动创建
 - 支持部分配置缺失
+
+#### 7. 内存信息模块 (memory.rs)
+
+**职责**: 跨平台内存信息获取，替代 sysinfo 库
+
+**支持平台**:
+- Linux: 读取 `/proc/self/status` 和 `/proc/meminfo`
+- Windows: 使用 `GetProcessMemoryInfo` 和 `GlobalMemoryStatusEx` API
+
+**核心函数**:
+- `get_process_memory()`: 获取当前进程内存使用（字节）
+- `get_total_memory()`: 获取系统总内存（字节）
+
+**优化特点**:
+- 使用迭代器避免中间 Vec 分配
+- 详细的错误日志（`tracing::error!` 和 `tracing::warn!`）
+- 解析失败时返回 0 并记录警告
+
+#### 8. 时间工具模块 (time.rs)
+
+**职责**: RFC3339 时间格式化，替代 chrono 库
+
+**核心结构**:
+- `UtcTime`: UTC 时间结构体
+  - `timestamp`: Unix 时间戳（秒）
+
+**核心函数**:
+- `UtcTime::now()`: 获取当前 UTC 时间
+- `to_rfc3339()`: 格式化为 RFC3339 字符串
+- `signed_duration_since()`: 计算时间差
+- `utc_now_rfc3339()`: 快捷函数
+
+**优化特点**:
+- 手动实现日期算法（无需外部依赖）
+- 负时间戳边界处理
+- 支持负数秒数调整
+
+#### 9. Base64 编码模块 (base64.rs)
+
+**职责**: Base64 编码实现（RFC 4648），用于 WebSocket 握手
+
+**核心函数**:
+- `encode(input: &[u8]) -> String`: 标准 Base64 编码
+
+**优化特点**:
+- 仅实现编码功能（节省代码体积）
+- 无 unsafe 代码（使用 `String::from_utf8()`）
+- 高性能位运算实现
+
+**安全性**:
+- 移除 `unsafe` 块，使用安全 API
+- 符合 Rust 最小权限原则
+
+#### 10. 配置向导模块 (wizard.rs)
+
+**职责**: 交互式配置向导，引导用户创建配置文件
+
+**核心功能**:
+- `run()`: 启动向导流程
+- `prompt_listen_address()`: 询问监听地址
+- `prompt_port()`: 询问端口
+- `prompt_users()`: 询问用户配置
+
+**邮箱验证**:
+- 检查 `@` 和 `.` 位置关系
+- 拒绝无效格式（`@example.com`, `user@`, `user@.`）
+- 友好的警告提示
 
 ### 前端架构
 

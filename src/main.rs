@@ -94,37 +94,49 @@ async fn main() -> Result<()> {
 
     // 获取外网 IP 并生成 VLESS 链接
     info!("Detecting public IP...");
-    match utils::get_public_ip().await {
-        Ok(public_ip) => {
-            info!("Public IP: {}", public_ip);
-            info!("\n========== VLESS Connection Links ==========");
-            for user in &config.users {
-                let url = utils::generate_vless_url(
-                    &user.uuid,
-                    &public_ip,
-                    config.server.port,
-                    user.email.as_deref(),
-                );
-                info!("{}", url);
+
+    // 优先使用配置文件中的 IP
+    let public_ip = if let Some(configured_ip) = config.server.public_ip.clone() {
+        info!("Using configured public IP: {}", configured_ip);
+        configured_ip
+    } else {
+        // 自动检测 IP
+        match utils::get_public_ip_with_diagnostic().await {
+            Ok(ip) => {
+                info!("Public IP detected: {}", ip);
+                ip
             }
-            info!("==========================================\n");
-        }
-        Err(e) => {
-            warn!("Failed to detect public IP: {}", e);
-            info!("\n========== VLESS Connection Links ==========");
-            info!("Please replace YOUR_SERVER_IP with your actual public IP:");
-            for user in &config.users {
-                let url = utils::generate_vless_url(
-                    &user.uuid,
-                    "YOUR_SERVER_IP",
-                    config.server.port,
-                    user.email.as_deref(),
-                );
-                info!("{}", url);
+            Err(e) => {
+                warn!("Failed to detect public IP:");
+                warn!("  {}", e);
+                info!("Tips:");
+                info!("  1. Check network connectivity: curl https://myip.ipip.net");
+                info!("  2. Check DNS resolution: nslookup myip.ipip.net");
+                info!("  3. Check firewall rules for outbound HTTPS");
+                info!("  4. Add 'public_ip' field in config.json to skip auto-detection");
+                "YOUR_SERVER_IP".to_string()
             }
-            info!("==========================================\n");
         }
+    };
+
+    info!("\n========== VLESS Connection Links ==========");
+    for user in &config.users {
+        let url = utils::generate_vless_url(
+            &user.uuid,
+            &public_ip,
+            config.server.port,
+            user.email.as_deref(),
+        );
+        info!("{}", url);
     }
+
+    if public_ip == "YOUR_SERVER_IP" {
+        info!("");
+        info!("⚠ Please replace YOUR_SERVER_IP with your actual public IP");
+        info!("  Or add 'public_ip' field to server section in config.json");
+    }
+
+    info!("==========================================\n");
 
     // 启动服务器
     let performance_config = config.performance.clone();

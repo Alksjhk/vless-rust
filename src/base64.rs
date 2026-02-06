@@ -37,5 +37,6 @@ pub fn encode(input: &[u8]) -> String {
         output.push(b'=');
     }
 
-    unsafe { String::from_utf8_unchecked(output) }
+    // Base64 输出保证是有效的 UTF-8（只包含 ASCII 字符）
+    String::from_utf8(output).expect("Base64 output should always be valid UTF-8")
 }

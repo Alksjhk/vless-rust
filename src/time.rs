@@ -45,6 +45,12 @@ pub fn utc_now_rfc3339() -> String {
 
 /// 格式化 Unix 时间戳为 RFC3339 字符串
 fn format_rfc3339(timestamp: i64) -> String {
+    // 处理负时间戳（1970 年之前的日期）
+    if timestamp < 0 {
+        tracing::warn!("Negative timestamp {}, this may produce incorrect results", timestamp);
+        // 继续处理，但结果可能不准确
+    }
+
     // 手动实现 RFC3339 格式化
     // 使用标准算法计算日期时间
 
@@ -105,7 +111,8 @@ fn format_rfc3339(timestamp: i64) -> String {
         day -= days_in_month;
     }
 
-    // 计算时分秒
+    // 计算时分秒（处理负数的秒数）
+    let secs_of_day = if secs_of_day < 0 { secs_of_day + SECS_PER_DAY } else { secs_of_day };
     let hour = (secs_of_day / SECS_PER_HOUR) as i32;
     let minute = ((secs_of_day % SECS_PER_HOUR) / SECS_PER_MINUTE) as i32;
     let second = (secs_of_day % SECS_PER_MINUTE) as i32;

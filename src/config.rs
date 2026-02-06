@@ -99,6 +99,9 @@ pub struct Config {
 pub struct ServerSettings {
     pub listen: String,
     pub port: u16,
+    /// 公网 IP 地址（可选），配置后将不再自动检测
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
