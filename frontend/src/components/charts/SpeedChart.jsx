@@ -40,28 +40,54 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
     }
   }, [])
 
-  // 转换数据格式
+  // 转换数据格式（固定2分钟时间窗口）
   const chartData = useMemo(() => {
+    // 定义固定槽位数量：120个槽（120秒）
+    const FIXED_SLOTS = 120
+
+    // 如果没有历史数据，返回空
     if (!speedHistory || speedHistory.length === 0) {
       return []
     }
 
-    return speedHistory.map((item, index) => {
-      const timestamp = parseInt(item.timestamp)
+    // 当前时间戳（秒）
+    const now = Math.floor(Date.now() / 1000)
+
+    // 取最新数据点的时间戳作为当前时间（如果有的话）
+    const latestTimestamp = speedHistory.length > 0
+      ? parseInt(speedHistory[speedHistory.length - 1].timestamp)
+      : now
+
+    // 构建固定120个槽位的时间窗口
+    // 从 (当前时间 - 119秒) 到 当前时间
+    const fixedSlots = []
+    for (let i = 0; i < FIXED_SLOTS; i++) {
+      const slotTimestamp = latestTimestamp - (FIXED_SLOTS - 1 - i)
+
+      // 查找对应时间戳的历史数据
+      const matchedData = speedHistory.find(item => {
+        const itemTimestamp = parseInt(item.timestamp)
+        return itemTimestamp === slotTimestamp
+      })
+
+      // 转换数据点
+      const timestamp = matchedData ? slotTimestamp : slotTimestamp
       const date = new Date(timestamp * 1000)
-      
-      return {
-        x: index,
+
+      fixedSlots.push({
+        x: i,
         time: date.toLocaleTimeString('zh-CN', {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit'
         }),
-        upload: parseSpeedString(item.upload_speed || '0 B/s'),
-        download: parseSpeedString(item.download_speed || '0 B/s'),
+        upload: parseSpeedString(matchedData?.upload_speed || '0 B/s'),
+        download: parseSpeedString(matchedData?.download_speed || '0 B/s'),
         timestamp
-      }
-    })
+      })
+    }
+
+    return fixedSlots
   }, [speedHistory])
 
   // 计算 Y 轴最大值（动态调整）
@@ -91,16 +117,16 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
     return `${value.toFixed(2)} MB/s`
   }
 
-  // X 轴刻度（显示10个均匀分布的时间点）
+  // X 轴刻度（固定显示10个均匀分布的时间点）
   const xTickValues = useMemo(() => {
-    if (chartData.length === 0) return []
-    const len = chartData.length
-    if (len <= 10) return chartData.map((_, i) => i)
+    const FIXED_SLOTS = 120
 
-    // 生成10个均匀分布的索引
+    if (chartData.length === 0) return []
+
+    // 生成10个均匀分布的索引（固定120个槽位）
     const ticks = []
     for (let i = 0; i < 10; i++) {
-      const index = Math.floor((i / 9) * (len - 1))
+      const index = Math.floor((i / 9) * (FIXED_SLOTS - 1))
       ticks.push(index)
     }
     return ticks
