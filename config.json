@@ -1,16 +1,16 @@
 {
   "monitor": {
-    "last_update": "",
+    "last_update": "2026-02-08T08:25:20Z",
     "total_download_bytes": 0,
     "total_upload_bytes": 0,
     "users": {}
   },
   "monitoring": {
     "broadcast_interval": 1,
-    "speed_history_duration": 60,
-    "vless_max_connections": 300,
+    "speed_history_duration": 120,
+    "vless_max_connections": 1000,
     "websocket_heartbeat_timeout": 60,
-    "websocket_max_connections": 300
+    "websocket_max_connections": 5
   },
   "performance": {
     "buffer_size": 131072,

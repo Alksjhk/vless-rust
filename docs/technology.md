@@ -20,11 +20,12 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **HTTP 客户端**: reqwest (native-tls)
 
 ### 前端
-- **框架**: Vue 3 (Composition API)
+- **框架**: React 18 (Hooks)
 - **构建工具**: Vite (rolldown-vite 优化)
+- **状态管理**: Zustand
+- **图表库**: Victory
+- **样式**: Tailwind CSS (玻璃态 UI)
 - **实时通信**: WebSocket + API 降级
-- **状态管理**: Composables 模式
-- **样式**: CSS 变量 + 响应式设计
 
 ## 架构设计
 
@@ -95,19 +96,19 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 
 | 文件路径 | 核心功能 | 组件/函数 |
 |---------|---------|----------|
-| `frontend/src/App.vue` | 主应用容器、布局 | `<template>` - 仪表板布局 |
-| `frontend/src/main.js` | 应用入口、插件注册 | `createApp()` - 初始化 Vue 应用 |
-| `frontend/src/composables/useWebSocket.js` | WebSocket 连接管理 | `useWebSocket()` - 实时数据连接 |
-| `frontend/src/composables/useTheme.js` | 主题切换管理 | `useTheme()` - 明暗主题切换 |
-| `frontend/src/components/StatCard.vue` | 统计卡片基础组件 | `<StatCard>` - 通用数据展示 |
-| `frontend/src/components/SpeedCard.vue` | 实时速度显示 | `<SpeedCard>` - 上传/下载速度 |
-| `frontend/src/components/TrafficCard.vue` | 总流量显示 | `<TrafficCard>` - 总上传/下载流量 |
-| `frontend/src/components/ConnectionsCard.vue` | 连接数显示 | `<ConnectionsCard>` - 活跃连接统计 |
-| `frontend/src/components/UptimeCard.vue` | 运行时间显示 | `<UptimeCard>` - 服务器运行时长 |
-| `frontend/src/components/MemoryCard.vue` | 内存使用显示 | `<MemoryCard>` - 内存占用统计 |
-| `frontend/src/components/TrafficChart.vue` | 流量趋势图表 | `<TrafficChart>` - 速度历史曲线 |
-| `frontend/src/components/UserStats.vue` | 用户流量统计 | `<UserStats>` - 用户级别流量表格 |
-| `frontend/src/components/ThemeToggle.vue` | 主题切换按钮 | `<ThemeToggle>` - 明暗模式切换 |
+| `frontend/src/App.jsx` | 主应用容器、布局 | `<App>` - 仪表板布局 |
+| `frontend/src/main.jsx` | 应用入口、React 挂载 | `ReactDOM.createRoot()` - 初始化 React 应用 |
+| `frontend/src/components/metrics/ConnectionsMetric.jsx` | 活跃连接显示 | `<ConnectionsMetric>` - 连接数统计（React.memo优化） |
+| `frontend/src/components/metrics/SpeedMetric.jsx` | 实时速度显示 | `<SpeedMetric>` - 上传/下载速度（React.memo优化） |
+| `frontend/src/components/metrics/TrafficMetric.jsx` | 总流量显示 | `<TrafficMetric>` - 总流量统计（React.memo优化） |
+| `frontend/src/components/metrics/MemoryMetric.jsx` | 内存使用显示 | `<MemoryMetric>` - 内存使用量（React.memo优化） |
+| `frontend/src/components/metrics/UptimeMetric.jsx` | 运行时间显示 | `<UptimeMetric>` - 服务器运行时长（React.memo优化） |
+| `frontend/src/components/charts/SpeedChart.jsx` | 流量趋势图表 | `<SpeedChart>` - Victory 实现，动态Y轴，ResizeObserver响应式宽度 |
+| `frontend/src/components/charts/TrafficChartSection.jsx` | 图表容器组件 | `<TrafficChartSection>` - 连接状态、历史时长显示 |
+| `frontend/src/components/ResourceCard.jsx` | 资源使用显示 | `<ResourceCard>` - 内存和连接数（React.memo优化） |
+| `frontend/src/components/SystemInfo.jsx` | 系统信息面板 | `<SystemInfo>` - 服务器状态总览（React.memo优化） |
+| `frontend/src/utils/debounce.js` | 防抖和节流工具 | `debounce()`, `throttle()` - 性能优化工具函数 |
+| `frontend/src/components/UserTable.jsx` | 用户流量统计 | `<UserTable>` - 用户级别流量表格 |
 
 ### 配置文件
 
@@ -231,12 +232,18 @@ struct SpeedSnapshot {
 - 对比当前快照和上次快照
 - 计算时间差和流量差
 - 得出精确的传输速度
-- 保留 60 秒历史数据
+- 保留 120 秒历史数据
+- 支持总体速度和用户级别速度计算
 
 **批量统计优化**:
 - 累积 64KB 流量才更新统计
 - 减少锁竞争 90%+
 - 高并发场景性能提升显著
+
+**流量统计策略**:
+- **仅统计VLESS代理流量**：只有通过VLESS协议的TCP/UDP代理流量会被统计
+- **排除HTTP请求**：前端监控页面的HTTP请求（API、静态资源、WebSocket）不计入流量统计
+- HTTP请求在 `handle_connection` 的早期阶段被识别并分流，不进入流量统计逻辑
 
 **持久化策略**:
 - 每 10 分钟自动保存到配置文件
@@ -301,9 +308,24 @@ X-XSS-Protection: 1; mode=block
 
 **配置结构**:
 - `server`: 服务器监听配置
+  - `listen`: 监听地址
+  - `port`: 监听端口
+  - `public_ip`: 公网 IP（可选）
 - `users`: 用户 UUID 列表
 - `monitoring`: 监控参数配置
+  - `speed_history_duration`: 速度历史时长（默认 120 秒，2 分钟）
+  - `broadcast_interval`: 广播间隔（默认 1 秒）
+  - `websocket_max_connections`: WebSocket 最大连接数（默认 300）
+  - `websocket_heartbeat_timeout`: WebSocket 心跳超时（默认 60 秒）
+  - `vless_max_connections`: VLESS 最大连接数（默认 300）
 - `performance`: 性能优化配置
+  - `buffer_size`: 传输缓冲区大小（默认 128KB）
+  - `tcp_nodelay`: TCP_NODELAY 启用（默认 true）
+  - `tcp_recv_buffer`: TCP 接收缓冲区（默认 256KB）
+  - `tcp_send_buffer`: TCP 发送缓冲区（默认 256KB）
+  - `stats_batch_size`: 流量统计批量大小（默认 64KB）
+  - `udp_timeout`: UDP 会话超时（默认 30 秒）
+  - `udp_recv_buffer`: UDP 接收缓冲区（默认 64KB）
 
 **默认值策略**:
 - 使用 serde 默认值
@@ -382,41 +404,41 @@ X-XSS-Protection: 1; mode=block
 #### 组件结构
 
 ```
-App.vue (根组件)
-├── ThemeToggle.vue (主题切换)
-├── TrafficChart.vue (流量波形图)
-├── SpeedCard.vue (上传速度卡片)
-├── DownloadCard.vue (下载速度卡片)
-├── TrafficCard.vue (总流量卡片)
-├── UptimeCard.vue (运行时长卡片)
-├── MemoryCard.vue (内存使用卡片)
-├── ConnectionsCard.vue (连接数卡片)
-└── UserStats.vue (用户流量统计)
+App.jsx (根组件)
+├── layouts/
+│   └── DashboardLayout.jsx (仪表板布局)
+├── components/
+│   ├── ThemeToggle.jsx (主题切换)
+│   ├── TrafficChart.jsx (流量波形图 - Recharts)
+│   ├── SpeedCard.jsx (上传速度卡片)
+│   ├── TrafficCard.jsx (总流量卡片)
+│   ├── UptimeCard.jsx (运行时长卡片)
+│   ├── ResourceCard.jsx (资源使用卡片)
+│   ├── SystemInfo.jsx (系统信息面板)
+│   └── UserTable.jsx (用户流量统计)
+├── store/
+│   └── monitorStore.js (Zustand 全局状态)
+└── api/
+    ├── websocket.js (WebSocket 连接管理)
+    └── rest.js (REST API 封装)
 ```
 
-#### Composables
+#### 状态管理
 
-**useWebSocket**:
-- 单例模式管理状态
-- WebSocket 实时连接
+**Zustand Store**:
+- `useMonitorStore()` - 全局监控状态
+- WebSocket 实时连接状态
 - API 降级机制
 - 历史数据持久化
-
-**useTheme**:
-- 主题切换逻辑
-- localStorage 持久化
-- CSS 变量管理
 
 #### 数据流
 
 ```
 WebSocket/API
     ↓
-useWebSocket (状态管理)
+monitorStore (Zustand 状态管理)
     ↓
-Composables (数据处理)
-    ↓
-Components (视图渲染)
+React Components (视图渲染)
 ```
 
 ## 数据流
@@ -500,22 +522,18 @@ UUID 验证
 
 ### 前端优化
 
-1. **单例状态**:
+1. **流量图表优化**:
+   - Y轴默认上界设置为 200KB/s (0.2 MB/s)
+   - 支持数据超出时动态扩展Y轴范围
+   - 小于1MB/s时自动显示为KB/s单位
+   - 2分钟历史数据（120秒），每秒一个数据点
+
+2. **Zustand状态管理**:
+   - 轻量级全局状态管理
    - 避免重复连接
    - 减少内存占用
-   - 提升性能
 
-2. **会话存储**:
-   - 历史数据持久化
-   - 刷新页面保留数据
-   - 改善用户体验
-
-3. **Canvas 渲染**:
-   - 高性能波形图
-   - 60 FPS 流畅动画
-   - 低 CPU 占用
-
-4. **API 降级**:
+3. **API降级机制**:
    - WebSocket 失败自动降级
    - 保证功能可用
    - 用户体验优先

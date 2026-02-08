@@ -68,7 +68,35 @@ async fn main() -> Result<()> {
     // 创建统计模块
     let config_path = config_path.clone();
     let monitoring_config = config.monitoring.clone();
-    let stats = Arc::new(Mutex::new(Stats::new(config_path.clone(), monitoring_config.clone())));
+
+    // 获取外网 IP（在创建统计模块之前获取）
+    info!("Detecting public IP...");
+
+    // 优先使用配置文件中的 IP
+    let public_ip = if let Some(configured_ip) = config.server.public_ip.clone() {
+        info!("Using configured public IP: {}", configured_ip);
+        configured_ip
+    } else {
+        // 自动检测 IP
+        match utils::get_public_ip().await {
+            Ok(ip) => {
+                info!("Public IP detected: {}", ip);
+                ip
+            }
+            Err(e) => {
+                warn!("Failed to detect public IP:");
+                warn!("  {}", e);
+                info!("Tips:");
+                info!("  1. Check network connectivity: curl https://myip.ipip.net");
+                info!("  2. Check DNS resolution: nslookup myip.ipip.net");
+                info!("  3. Check firewall rules for outbound HTTPS");
+                info!("  4. Add 'public_ip' field in config.json to skip auto-detection");
+                "YOUR_SERVER_IP".to_string()
+            }
+        }
+    };
+
+    let stats = Arc::new(Mutex::new(Stats::new(config_path.clone(), monitoring_config.clone(), public_ip.clone())));
 
     // 从配置文件加载统计数据
     if let Err(e) = stats.lock().await.load_from_config() {
@@ -91,33 +119,6 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         start_stats_persistence(stats_persistence, config_path).await;
     });
-
-    // 获取外网 IP 并生成 VLESS 链接
-    info!("Detecting public IP...");
-
-    // 优先使用配置文件中的 IP
-    let public_ip = if let Some(configured_ip) = config.server.public_ip.clone() {
-        info!("Using configured public IP: {}", configured_ip);
-        configured_ip
-    } else {
-        // 自动检测 IP
-        match utils::get_public_ip_with_diagnostic().await {
-            Ok(ip) => {
-                info!("Public IP detected: {}", ip);
-                ip
-            }
-            Err(e) => {
-                warn!("Failed to detect public IP:");
-                warn!("  {}", e);
-                info!("Tips:");
-                info!("  1. Check network connectivity: curl https://myip.ipip.net");
-                info!("  2. Check DNS resolution: nslookup myip.ipip.net");
-                info!("  3. Check firewall rules for outbound HTTPS");
-                info!("  4. Add 'public_ip' field in config.json to skip auto-detection");
-                "YOUR_SERVER_IP".to_string()
-            }
-        }
-    };
 
     info!("\n========== VLESS Connection Links ==========");
     for user in &config.users {

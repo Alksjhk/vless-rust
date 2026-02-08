@@ -225,6 +225,19 @@ impl VlessServer {
         let uuid_str = request.uuid.to_string();
         let user_email = config.get_user_email(&request.uuid);
 
+        // 检查VLESS连接数限制
+        let current_connections = {
+            let stats_guard = stats.lock().await;
+            stats_guard.get_active_connections()
+        };
+
+        if current_connections >= monitoring_config.vless_max_connections {
+            warn!("VLESS connection limit reached: {}/{} from {}",
+                  current_connections, monitoring_config.vless_max_connections, client_addr);
+            stats.lock().await.increment_rejected_connections();
+            return Err(anyhow!("Server connection limit reached"));
+        }
+
         // RAII guard for connection counting
         let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email).await;
 

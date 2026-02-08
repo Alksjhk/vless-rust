@@ -2,16 +2,8 @@ use anyhow::{Result, Context};
 use std::time::Duration;
 use futures_util::future;
 
-/// 获取外网 IP 地址
-/// - 同时请求 3 个可靠的 API
-/// - 任一成功即返回
-/// - 5秒超时，整体8秒超时
-pub async fn get_public_ip() -> Result<String> {
-    get_public_ip_with_diagnostic().await
-}
-
 /// 获取外网 IP 地址（带详细诊断信息）
-pub async fn get_public_ip_with_diagnostic() -> Result<String> {
+pub async fn get_public_ip() -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()

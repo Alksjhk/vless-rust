@@ -43,11 +43,11 @@ pub struct PerformanceConfig {
     pub udp_recv_buffer: usize,
 }
 
-fn default_history_duration() -> u64 { 60 }
+fn default_history_duration() -> u64 { 120 }
 fn default_broadcast_interval() -> u64 { 1 }
-fn default_ws_max_connections() -> usize { 300 }
+fn default_ws_max_connections() -> usize { 5 }
 fn default_ws_heartbeat_timeout() -> u64 { 60 }
-fn default_vless_max_connections() -> usize { 300 }
+fn default_vless_max_connections() -> usize { 1000 }
 
 // Performance config defaults
 fn default_buffer_size() -> usize { 128 * 1024 }  // 128KB
