@@ -22,6 +22,11 @@ impl UtcTime {
         Self { timestamp }
     }
 
+    /// 获取 Unix 时间戳（秒）
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
     /// 格式化为 RFC3339 字符串
     ///
     /// 示例: "2024-02-06T12:34:56Z"

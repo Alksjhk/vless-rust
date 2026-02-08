@@ -65,11 +65,12 @@ npm run preview
 
 **前端架构：**
 
-- Vue 3 Composition API
-- Vite 构建工具（使用 rolldown-vite 优化）
-- 组件化设计，每个统计指标独立组件
-- Composables 模式（useStats、useTheme、useWebSocket）
-- CSS 变量实现主题切换
+- React 18 (Hooks)
+- Vite 构建工具（快速开发和优化）
+- Zustand 状态管理（轻量级全局状态）
+- Recharts 图表库（流量波形图）
+- Tailwind CSS（玻璃态 UI 样式）
+- WebSocket 智能降级（优先 WS，失败降级轮询）
 
 ### 关键设计模式
 
@@ -81,7 +82,7 @@ npm run preview
 **流量统计快照机制：**
 - 使用 `SpeedSnapshot` 记录流量和时间戳
 - `calculate_speeds()` 对比当前快照和上次快照计算精确速度
-- 保留 60 秒历史快照用于趋势图表
+- 保留 120 秒历史快照用于趋势图表
 - 每 10 分钟自动持久化总流量到配置文件
 
 **异步代理转发：**
@@ -118,7 +119,7 @@ npm run preview
     "last_update": "2024-01-01T00:00:00Z"
   },
   "monitoring": {
-    "speed_history_duration": 60,
+    "speed_history_duration": 120,
     "broadcast_interval": 1,
     "websocket_max_connections": 300,
     "websocket_heartbeat_timeout": 60,
@@ -157,19 +158,19 @@ npm run preview
 
 | 文件路径 | 核心功能 | 组件/函数 |
 |---------|---------|----------|
-| `frontend/src/App.vue` | 主应用容器、布局 | `<template>` - 仪表板布局 |
-| `frontend/src/main.js` | 应用入口、插件注册 | `createApp()` - 初始化 Vue 应用 |
-| `frontend/src/composables/useWebSocket.js` | WebSocket 连接管理 | `useWebSocket()` - 实时数据连接 |
-| `frontend/src/composables/useTheme.js` | 主题切换管理 | `useTheme()` - 明暗主题切换 |
-| `frontend/src/components/StatCard.vue` | 统计卡片基础组件 | `<StatCard>` - 通用数据展示 |
-| `frontend/src/components/SpeedCard.vue` | 实时速度显示 | `<SpeedCard>` - 上传/下载速度 |
-| `frontend/src/components/TrafficCard.vue` | 总流量显示 | `<TrafficCard>` - 总上传/下载流量 |
-| `frontend/src/components/ConnectionsCard.vue` | 连接数显示 | `<ConnectionsCard>` - 活跃连接统计 |
-| `frontend/src/components/UptimeCard.vue` | 运行时间显示 | `<UptimeCard>` - 服务器运行时长 |
-| `frontend/src/components/MemoryCard.vue` | 内存使用显示 | `<MemoryCard>` - 内存占用统计 |
-| `frontend/src/components/TrafficChart.vue` | 流量趋势图表 | `<TrafficChart>` - 速度历史曲线 |
-| `frontend/src/components/UserStats.vue` | 用户流量统计 | `<UserStats>` - 用户级别流量表格 |
-| `frontend/src/components/ThemeToggle.vue` | 主题切换按钮 | `<ThemeToggle>` - 明暗模式切换 |
+| `frontend/src/App.jsx` | 主应用容器、布局 | `<App>` - 仪表板布局 |
+| `frontend/src/main.jsx` | 应用入口、React 挂载 | `ReactDOM.createRoot()` - 初始化 React 应用 |
+| `frontend/src/store/monitorStore.js` | Zustand 全局状态 | `useMonitorStore()` - 监控数据状态管理 |
+| `frontend/src/api/websocket.js` | WebSocket 连接管理 | `WebSocketClient` - 实时数据连接（智能降级） |
+| `frontend/src/api/rest.js` | REST API 封装 | `fetchStats()` - API 请求函数 |
+| `frontend/src/components/MetricCard.jsx` | 指标卡片基础组件 | `<MetricCard>` - 通用数据展示 |
+| `frontend/src/components/SpeedCard.jsx` | 实时速度显示 | `<SpeedCard>` - 上传/下载速度 |
+| `frontend/src/components/TrafficCard.jsx` | 总流量显示 | `<TrafficCard>` - 总流量统计 |
+| `frontend/src/components/UptimeCard.jsx` | 运行时间显示 | `<UptimeCard>` - 服务器运行时长 |
+| `frontend/src/components/ResourceCard.jsx` | 资源使用显示 | `<ResourceCard>` - 内存和连接数 |
+| `frontend/src/components/TrafficChart.jsx` | 流量趋势图表 | `<TrafficChart>` - Recharts 速度历史曲线 |
+| `frontend/src/components/SystemInfo.jsx` | 系统信息面板 | `<SystemInfo>` - 服务器状态总览 |
+| `frontend/src/components/UserTable.jsx` | 用户流量统计 | `<UserTable>` - 用户级别流量表格 |
 
 ### 配置文件
 
@@ -210,9 +211,8 @@ npm run preview
 - **HTTP 路由处理** → `src/http.rs:handle_http_request()`
 - **WebSocket 推送** → `src/ws.rs:WebSocketManager::broadcast()`
 - **监控 API 端点** → `src/http.rs` - 路由匹配部分
-- **前端主题切换** → `frontend/src/composables/useTheme.js`
-- **前端实时数据** → `frontend/src/composables/useWebSocket.js`
-- **前端统计卡片** → `frontend/src/components/*.vue`
+- **前端实时数据** → `frontend/src/store/monitorStore.js`
+- **前端统计卡片** → `frontend/src/components/*.jsx`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
@@ -226,8 +226,8 @@ npm run preview
    - 在 `MonitorData` 结构体定义 JSON 字段
 
 2. **前端（frontend/src/）：**
-   - 在 `components/` 创建新的 Vue 组件
-   - 在 `App.vue` 中引入并使用组件
+   - 在 `components/` 创建新的 React 组件
+   - 在 `App.jsx` 中引入并使用组件
 
 ### 添加新的 API 端点
 
@@ -262,8 +262,12 @@ npm run preview
 - 前端构建输出到 `../static/` 目录，编译时嵌入到可执行文件
 - 开发模式下 Vite 代理 `/api` 请求到 `http://localhost:8443`
 - 静态资源路径使用相对路径，支持部署在子路径
-- 主题偏好存储在 localStorage，key 为 `theme`
+- 使用 Zustand 管理全局状态，WebSocket 智能降级到 REST API 轮询
 - **部署说明**：编译后的可执行文件已包含所有静态资源，无需 static 目录即可运行
+- **开发命令**：
+  - `npm install` - 安装依赖
+  - `npm run dev` - 开发模式（端口 3000）
+  - `npm run build` - 构建到 `static/` 目录
 
 ## 编译优化
 

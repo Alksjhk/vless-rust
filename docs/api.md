@@ -36,8 +36,8 @@ GET /api/stats
     {
       "uuid": "12345678-1234-1234-1234-123456789abc",
       "email": "user1@example.com",
-      "upload_speed": "0 B/s",
-      "download_speed": "0 B/s",
+      "upload_speed": "1.23 MB/s",
+      "download_speed": "2.34 MB/s",
       "total_traffic": "5.23 GB",
       "active_connections": 2
     }
@@ -85,16 +85,16 @@ GET /api/user-stats
   {
     "uuid": "12345678-1234-1234-1234-123456789abc",
     "email": "user1@example.com",
-    "upload_speed": "0 B/s",
-    "download_speed": "0 B/s",
+    "upload_speed": "1.23 MB/s",
+    "download_speed": "2.34 MB/s",
     "total_traffic": "5.23 GB",
     "active_connections": 2
   },
   {
     "uuid": "87654321-4321-4321-4321-cba987654321",
     "email": null,
-    "upload_speed": "0 B/s",
-    "download_speed": "0 B/s",
+    "upload_speed": "512 KB/s",
+    "download_speed": "1.45 MB/s",
     "total_traffic": "10.45 GB",
     "active_connections": 3
   }
@@ -107,7 +107,7 @@ GET /api/user-stats
 
 ### 3. 获取速度历史数据
 
-获取服务器最近一段时间（默认 60 秒）的速度历史记录。
+获取服务器最近一段时间（默认 120 秒）的速度历史记录。
 
 **请求**
 ```http
@@ -129,7 +129,7 @@ GET /api/speed-history
       "download_speed": "2.56 MB/s"
     }
   ],
-  "duration_seconds": 60
+  "duration_seconds": 120
 }
 ```
 
@@ -158,7 +158,7 @@ GET /api/config
 **响应示例**
 ```json
 {
-  "speed_history_duration": 60,
+  "speed_history_duration": 120,
   "broadcast_interval": 1,
   "websocket_max_connections": 300,
   "websocket_heartbeat_timeout": 60,
@@ -169,7 +169,7 @@ GET /api/config
 **字段说明**
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| speed_history_duration | number | 60 | 速度历史保留时长（秒） |
+| speed_history_duration | number | 120 | 速度历史保留时长（秒） |
 | broadcast_interval | number | 1 | WebSocket 广播间隔（秒） |
 | websocket_max_connections | number | 300 | WebSocket 最大连接数 |
 | websocket_heartbeat_timeout | number | 60 | WebSocket 心跳超时（秒） |
@@ -251,7 +251,7 @@ ws://your-server:8443/ws
         "download_speed": "2.34 MB/s"
       }
     ],
-    "duration_seconds": 60
+    "duration_seconds": 120
   }
 }
 ```

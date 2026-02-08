@@ -243,7 +243,7 @@ npm run dev
 - `email`: 用户邮箱（可选，用于生成 VLESS 链接别名）
 
 #### 监控配置（可选）
-- `speed_history_duration`: 速度历史保留时长（秒），默认60
+- `speed_history_duration`: 速度历史保留时长（秒），默认120
 - `broadcast_interval`: WebSocket广播间隔（秒），默认1
 - `websocket_max_connections`: WebSocket最大连接数，默认300
 - `websocket_heartbeat_timeout`: WebSocket心跳超时（秒），默认60

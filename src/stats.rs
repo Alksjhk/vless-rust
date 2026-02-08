@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 
 use crate::config::MonitoringConfig;
+use crate::time::UtcTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorData {
+    pub timestamp: String,         // 当前 Unix 时间戳（秒）
     pub upload_speed: String,
     pub download_speed: String,
     pub total_traffic: String,
@@ -16,6 +18,7 @@ pub struct MonitorData {
     pub total_memory: String,
     pub active_connections: usize,
     pub max_connections: usize,
+    pub public_ip: String,         // 服务器公网IP
     pub users: Vec<UserMonitorData>,
 }
 
@@ -58,6 +61,10 @@ struct UserStats {
     total_upload_bytes: u64,
     total_download_bytes: u64,
     active_connections: usize,
+    last_upload_snapshot: Option<SpeedSnapshot>,
+    last_download_snapshot: Option<SpeedSnapshot>,
+    current_upload_speed: f64,
+    current_download_speed: f64,
 }
 
 pub struct Stats {
@@ -65,41 +72,42 @@ pub struct Stats {
     total_download_bytes: u64,    // 客户端下载的总字节数
     active_connections: usize,
     start_time: Instant,
+    start_unix_time: i64,         // 服务器启动时的 Unix 时间戳（秒）
     speed_history: Vec<SpeedSnapshot>,
     config_path: String,
     last_upload_snapshot: Option<SpeedSnapshot>,
     last_download_snapshot: Option<SpeedSnapshot>,
     config: MonitoringConfig,
     user_stats: std::collections::HashMap<String, UserStats>,
+    public_ip: String,            // 服务器公网IP
 }
 
 impl Stats {
-    pub fn new(config_path: String, monitoring_config: MonitoringConfig) -> Self {
+    pub fn new(config_path: String, monitoring_config: MonitoringConfig, public_ip: String) -> Self {
         let now = Instant::now();
+        let start_unix_time = UtcTime::now().timestamp();
+
+        let initial_snapshot = SpeedSnapshot {
+            upload_bytes: 0,
+            download_bytes: 0,
+            timestamp: now,
+            upload_speed: 0.0,
+            download_speed: 0.0,
+        };
 
         Self {
             total_upload_bytes: 0,
             total_download_bytes: 0,
             active_connections: 0,
             start_time: now,
-            speed_history: Vec::new(),
+            start_unix_time,
+            speed_history: vec![initial_snapshot.clone()],
             config_path,
-            last_upload_snapshot: Some(SpeedSnapshot {
-                upload_bytes: 0,
-                download_bytes: 0,
-                timestamp: now,
-                upload_speed: 0.0,
-                download_speed: 0.0,
-            }),
-            last_download_snapshot: Some(SpeedSnapshot {
-                upload_bytes: 0,
-                download_bytes: 0,
-                timestamp: now,
-                upload_speed: 0.0,
-                download_speed: 0.0,
-            }),
+            last_upload_snapshot: Some(initial_snapshot.clone()),
+            last_download_snapshot: Some(initial_snapshot),
             config: monitoring_config,
             user_stats: HashMap::new(),
+            public_ip,
         }
     }
 
@@ -118,6 +126,10 @@ impl Stats {
             total_upload_bytes: 0,
             total_download_bytes: 0,
             active_connections: 0,
+            last_upload_snapshot: None,
+            last_download_snapshot: None,
+            current_upload_speed: 0.0,
+            current_download_speed: 0.0,
         });
         user_stats.total_upload_bytes += bytes;
         if email.is_some() && user_stats.email.is_none() {
@@ -132,6 +144,10 @@ impl Stats {
             total_upload_bytes: 0,
             total_download_bytes: 0,
             active_connections: 0,
+            last_upload_snapshot: None,
+            last_download_snapshot: None,
+            current_upload_speed: 0.0,
+            current_download_speed: 0.0,
         });
         user_stats.total_download_bytes += bytes;
         if email.is_some() && user_stats.email.is_none() {
@@ -146,6 +162,10 @@ impl Stats {
             total_upload_bytes: 0,
             total_download_bytes: 0,
             active_connections: 0,
+            last_upload_snapshot: None,
+            last_download_snapshot: None,
+            current_upload_speed: 0.0,
+            current_download_speed: 0.0,
         });
         user_stats.active_connections += 1;
         if email.is_some() && user_stats.email.is_none() {
@@ -240,16 +260,94 @@ impl Stats {
             self.speed_history.retain(|s| now.duration_since(s.timestamp) < Duration::from_secs(self.config.speed_history_duration));
         }
 
+        // 计算所有用户的速度
+        for user_stats in self.user_stats.values_mut() {
+            let (user_upload_speed, user_download_speed) = Self::calculate_user_speed_internal(user_stats, now);
+            user_stats.current_upload_speed = user_upload_speed;
+            user_stats.current_download_speed = user_download_speed;
+        }
+
+        (upload_speed, download_speed)
+    }
+
+    fn calculate_user_speed_internal(user_stats: &mut UserStats, now: Instant) -> (f64, f64) {
+        let upload_speed = if let Some(last_snapshot) = user_stats.last_upload_snapshot.take() {
+            let duration_secs = now.duration_since(last_snapshot.timestamp).as_secs_f64();
+
+            if duration_secs < 0.1 {
+                user_stats.last_upload_snapshot = Some(last_snapshot);
+                0.0
+            } else {
+                let upload_diff = user_stats.total_upload_bytes.saturating_sub(last_snapshot.upload_bytes);
+                let speed = (upload_diff as f64) / duration_secs;
+
+                user_stats.last_upload_snapshot = Some(SpeedSnapshot {
+                    upload_bytes: user_stats.total_upload_bytes,
+                    download_bytes: user_stats.total_download_bytes,
+                    timestamp: now,
+                    upload_speed: speed,
+                    download_speed: 0.0,
+                });
+                speed
+            }
+        } else {
+            let snapshot = SpeedSnapshot {
+                upload_bytes: user_stats.total_upload_bytes,
+                download_bytes: user_stats.total_download_bytes,
+                timestamp: now,
+                upload_speed: 0.0,
+                download_speed: 0.0,
+            };
+            user_stats.last_upload_snapshot = Some(snapshot);
+            0.0
+        };
+
+        let download_speed = if let Some(last_snapshot) = user_stats.last_download_snapshot.take() {
+            let duration_secs = now.duration_since(last_snapshot.timestamp).as_secs_f64();
+
+            if duration_secs < 0.1 {
+                user_stats.last_download_snapshot = Some(last_snapshot);
+                0.0
+            } else {
+                let download_diff = user_stats.total_download_bytes.saturating_sub(last_snapshot.download_bytes);
+                let speed = (download_diff as f64) / duration_secs;
+
+                user_stats.last_download_snapshot = Some(SpeedSnapshot {
+                    upload_bytes: user_stats.total_upload_bytes,
+                    download_bytes: user_stats.total_download_bytes,
+                    timestamp: now,
+                    upload_speed: 0.0,
+                    download_speed: speed,
+                });
+                speed
+            }
+        } else {
+            let snapshot = SpeedSnapshot {
+                upload_bytes: user_stats.total_upload_bytes,
+                download_bytes: user_stats.total_download_bytes,
+                timestamp: now,
+                upload_speed: 0.0,
+                download_speed: 0.0,
+            };
+            user_stats.last_download_snapshot = Some(snapshot);
+            0.0
+        };
+
         (upload_speed, download_speed)
     }
 
     pub fn get_speed_history_response(&self) -> SpeedHistoryResponse {
         let history: Vec<SpeedHistoryItem> = self.speed_history
             .iter()
-            .map(|snapshot| SpeedHistoryItem {
-                timestamp: snapshot.timestamp.duration_since(self.start_time).as_secs().to_string(),
-                upload_speed: format_speed(snapshot.upload_speed),
-                download_speed: format_speed(snapshot.download_speed),
+            .map(|snapshot| {
+                // 计算绝对 Unix 时间戳（秒）
+                let unix_timestamp = self.start_unix_time + snapshot.timestamp.duration_since(self.start_time).as_secs() as i64;
+
+                SpeedHistoryItem {
+                    timestamp: unix_timestamp.to_string(),
+                    upload_speed: format_speed(snapshot.upload_speed),
+                    download_speed: format_speed(snapshot.download_speed),
+                }
             })
             .collect();
 
@@ -265,8 +363,8 @@ impl Stats {
             UserMonitorData {
                 uuid: user.uuid.clone(),
                 email: user.email.clone(),
-                upload_speed: "0 B/s".to_string(),
-                download_speed: "0 B/s".to_string(),
+                upload_speed: format_speed(user.current_upload_speed),
+                download_speed: format_speed(user.current_download_speed),
                 total_traffic: format_bytes(total_traffic),
                 active_connections: user.active_connections,
             }
@@ -278,19 +376,23 @@ impl Stats {
 
         let total_bytes = self.total_upload_bytes + self.total_download_bytes;
 
+        // 计算当前 Unix 时间戳
+        let now_unix = self.start_unix_time + self.start_time.elapsed().as_secs() as i64;
+
         let users: Vec<UserMonitorData> = self.user_stats.values().map(|user| {
             let total_traffic = user.total_upload_bytes + user.total_download_bytes;
             UserMonitorData {
                 uuid: user.uuid.clone(),
                 email: user.email.clone(),
-                upload_speed: "0 B/s".to_string(),
-                download_speed: "0 B/s".to_string(),
+                upload_speed: format_speed(user.current_upload_speed),
+                download_speed: format_speed(user.current_download_speed),
                 total_traffic: format_bytes(total_traffic),
                 active_connections: user.active_connections,
             }
         }).collect();
 
         MonitorData {
+            timestamp: now_unix.to_string(),
             upload_speed: format_speed(upload_speed),
             download_speed: format_speed(download_speed),
             total_traffic: format_bytes(total_bytes),
@@ -299,6 +401,7 @@ impl Stats {
             total_memory: format_bytes(self.get_total_memory()),
             active_connections: self.active_connections,
             max_connections: self.config.vless_max_connections,
+            public_ip: self.public_ip.clone(),
             users,
         }
     }
@@ -341,6 +444,10 @@ impl Stats {
                                     total_upload_bytes: 0,
                                     total_download_bytes: 0,
                                     active_connections: 0,
+                                    last_upload_snapshot: None,
+                                    last_download_snapshot: None,
+                                    current_upload_speed: 0.0,
+                                    current_download_speed: 0.0,
                                 });
                                 user_stats.total_upload_bytes = upload;
                                 user_stats.total_download_bytes = download;

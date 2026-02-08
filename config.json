@@ -7,7 +7,7 @@
   },
   "monitoring": {
     "broadcast_interval": 1,
-    "speed_history_duration": 60,
+    "speed_history_duration": 120,
     "vless_max_connections": 300,
     "websocket_heartbeat_timeout": 60,
     "websocket_max_connections": 300

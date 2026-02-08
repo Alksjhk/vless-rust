@@ -1,18 +1,31 @@
 import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  plugins: [vue()],
-  build: {
-    outDir: '../static',
-    emptyOutDir: true
-  },
+  plugins: [react()],
+  base: './',
   server: {
+    port: 3000,
     proxy: {
       '/api': {
         target: 'http://localhost:8443',
-        changeOrigin: true,
+        changeOrigin: true
+      },
+      '/ws': {
+        target: 'ws://localhost:8443',
         ws: true
+      }
+    }
+  },
+  build: {
+    outDir: '../static',
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'chart-vendor': ['victory']
+        }
       }
     }
   }
