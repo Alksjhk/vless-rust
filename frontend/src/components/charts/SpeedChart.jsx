@@ -15,7 +15,7 @@ import {
 import { parseSpeedString } from '../../utils/formatters'
 
 function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
-  const [chartWidth, setChartWidth] = useState(600)
+  const [chartWidth, setChartWidth] = useState(1400)
   const containerRef = useRef(null)
 
   // 监听容器宽度变化
@@ -91,7 +91,7 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
   }, [speedHistory])
 
   // 计算 Y 轴最大值（动态调整）
-  // 默认 200 KB/s，超过后动态变化
+  // 默认 200 KB/s，超过后平滑动态变化
   const DEFAULT_MAX_Y = 200 / 1024 // 200 KB/s = 0.195 MB/s
   const maxY = useMemo(() => {
     if (chartData.length === 0) return DEFAULT_MAX_Y
@@ -103,12 +103,33 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
     // 如果最大值小于默认值，使用默认值
     if (max < DEFAULT_MAX_Y) return DEFAULT_MAX_Y
 
-    // 向上取整到合适的刻度
-    if (max < 0.1) return 0.1
-    if (max < 1) return Math.ceil(max * 10) / 10
-    if (max < 10) return Math.ceil(max)
-    return Math.ceil(max / 10) * 10
+    // 超过默认值后，动态计算最大值
+    // 增加缓冲空间，避免数据紧贴顶部
+    const buffer = 0.15 // 15% 缓冲
+    const bufferedMax = max * (1 + buffer)
+
+    // 根据数值大小，向上取整到合适的精度
+    // 这样可以保证刻度线是整数，显示更美观
+    if (bufferedMax < 1) {
+      // 小于1MB时，向上取整到0.1的倍数
+      return Math.ceil(bufferedMax * 10) / 10
+    } else if (bufferedMax < 10) {
+      // 1-10MB时，向上取整到0.5的倍数
+      return Math.ceil(bufferedMax * 2) / 2
+    } else {
+      // 大于10MB时，向上取整到整数的倍数
+      return Math.ceil(bufferedMax)
+    }
   }, [chartData])
+
+  // 计算 Y 轴刻度值（固定5个刻度）
+  const yAxisTicks = useMemo(() => {
+    const ticks = []
+    for (let i = 0; i <= 4; i++) {
+      ticks.push((maxY / 4) * i)
+    }
+    return ticks
+  }, [maxY])
 
   // 格式化速度显示
   const formatSpeed = (value) => {
@@ -141,12 +162,13 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
   }
 
   return (
-    <div ref={containerRef} className="w-full" style={{ height }}>
+    <div ref={containerRef} className="w-full" style={{ height, position: 'relative' }}>
       <VictoryChart
         theme={VictoryTheme.material}
         width={chartWidth}
         height={height}
-        padding={{ top: 20, right: 30, bottom: 50, left: 55 }}
+        padding={{ top: 40, right: 20, bottom: 35, left: 115 }}
+        style={{ parent: { width: '100%', height: '100%' } }}
         containerComponent={
           <VictoryVoronoiContainer
             voronoiDimension="x"
@@ -197,11 +219,11 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
           style={{
             axis: { stroke: 'hsl(var(--border))' },
             tickLabels: {
-              fontSize: 11,
+              fontSize: 12,
               fill: 'hsl(var(--muted-foreground))',
               angle: -45,
               textAnchor: 'end',
-              padding: 5
+              padding: 4
             }
           }}
         />
@@ -209,12 +231,14 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
         {/* Y 轴 */}
         <VictoryAxis
           dependentAxis
+          tickValues={yAxisTicks}
           tickFormat={formatSpeed}
           style={{
             axis: { stroke: 'hsl(var(--border))' },
             tickLabels: {
-              fontSize: 11,
-              fill: 'hsl(var(--muted-foreground))'
+              fontSize: 12,
+              fill: 'hsl(var(--muted-foreground))',
+              padding: 3
             },
             grid: {
               stroke: 'hsl(var(--border))',
@@ -235,7 +259,7 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
             data: {
               fill: showArea ? 'url(#uploadGradient)' : 'none',
               stroke: '#3b82f6',
-              strokeWidth: 2
+              strokeWidth: 3
             }
           }}
         />
@@ -251,20 +275,21 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
             data: {
               fill: showArea ? 'url(#downloadGradient)' : 'none',
               stroke: '#10b981',
-              strokeWidth: 2
+              strokeWidth: 3
             }
           }}
         />
 
-        {/* 图例 */}
+        {/* 图例 - 右上角 */}
         <VictoryLegend
-          x={60}
+          x={chartWidth - 130}
           y={10}
           orientation="horizontal"
-          gutter={24}
+          gutter={20}
+          anchor="end"
           style={{
             labels: {
-              fontSize: 12,
+              fontSize: 13,
               fill: 'hsl(var(--foreground))'
             }
           }}

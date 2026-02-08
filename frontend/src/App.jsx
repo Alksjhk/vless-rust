@@ -66,9 +66,9 @@ function App() {
       </section>
 
       {/* 主内容区域：图表和系统信息 */}
-      <section className="grid gap-6 lg:grid-cols-3 mb-6">
+      <section className="grid gap-6 lg:grid-cols-6 mb-6">
         {/* 流量趋势图 */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-5">
           <Suspense fallback={<ChartSkeleton />}>
             <TrafficChartSection />
           </Suspense>
