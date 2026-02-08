@@ -99,41 +99,21 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: vless.exe
             asset_name: vless-rust-windows-amd64
-          # Windows ARM64
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            artifact_name: vless.exe
-            asset_name: vless-rust-windows-arm64
           # Linux x64 (musl - 完全静态链接)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact_name: vless
-            asset_name: vless-rust-linux-amd64-musl
-          # Linux x64 (gnu)
+            asset_name: vless-rust-linux-amd64
+          # Linux ARM64 (musl - 完全静态链接)
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: vless
-            asset_name: vless-rust-linux-amd64-gnu
-          # Linux ARM64 (gnu)
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             artifact_name: vless
             asset_name: vless-rust-linux-arm64
-          # Linux ARMv7 (gnueabihf)
+          # Linux ARMv7 (musl - 完全静态链接)
           - os: ubuntu-latest
-            target: armv7-unknown-linux-gnueabihf
+            target: armv7-unknown-linux-musleabihf
             artifact_name: vless
             asset_name: vless-rust-linux-armv7
-          # macOS x64 (Intel)
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact_name: vless
-            asset_name: vless-rust-macos-amd64
-          # macOS ARM64 (Apple Silicon)
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: vless
-            asset_name: vless-rust-macos-arm64
 
     steps:
     - uses: actions/checkout@v4
@@ -143,26 +123,27 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
-    # Linux musl 需要安装 musl 工具链
-    - name: Install musl tools (Linux musl)
-      if: matrix.target == 'x86_64-unknown-linux-musl'
+    # Linux musl 需要安装 musl 工具链和交叉编译工具
+    - name: Install musl tools (Linux)
+      if: startsWith(matrix.target, 'x86_64-unknown-linux-musl')
       run: |
         sudo apt-get update
         sudo apt-get install -y musl-tools musl-dev
 
-    # Linux ARM 交叉编译工具
-    - name: Install ARM cross-compilation tools
-      if: startsWith(matrix.target, 'aarch64-unknown-linux') || matrix.target == 'armv7-unknown-linux-gnueabihf'
+    # Linux ARM musl 交叉编译工具
+    - name: Install ARM musl cross-compilation tools
+      if: startsWith(matrix.target, 'aarch64-unknown-linux-musl') || matrix.target == 'armv7-unknown-linux-musleabihf'
       run: |
         sudo apt-get update
-        if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-        elif [ "${{ matrix.target }}" == "armv7-unknown-linux-gnueabihf" ]; then
-          sudo apt-get install -y gcc-arm-linux-gnueabihf
-          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
-          echo "CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+        # 为 ARM musl 目标设置链接器环境变量
+        if [ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]; then
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        elif [ "${{ matrix.target }}" == "armv7-unknown-linux-musleabihf" ]; then
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+          echo "CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         fi
 
     # Node.js 用于前端构建
@@ -180,7 +161,12 @@ jobs:
 
     # 编译 Rust 项目
     - name: Build release binary
-      run: cargo build --release --target ${{ matrix.target }}
+      run: |
+        # Linux musl 目标启用静态链接
+        if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+          export RUSTFLAGS="-C target-feature=+crt-static $RUSTFLAGS"
+        fi
+        cargo build --release --target ${{ matrix.target }}
 
     # 验证静态链接（仅 Linux）
     - name: Verify static linking (Linux)
@@ -289,18 +275,16 @@ jobs:
 
         所有平台的二进制文件均为静态链接构建，无需额外依赖即可运行。
 
+        Linux 版本使用 musl 静态链接，可在各种 Linux 发行版上运行（Alpine、Ubuntu、CentOS、Debian 等）。
+
         ### 下载说明
 
         根据您的系统选择对应的文件：
 
         - **Windows AMD64**: `vless-rust-windows-amd64.exe` - Intel/AMD 64位 Windows
-        - **Windows ARM64**: `vless-rust-windows-arm64.exe` - ARM 64位 Windows
-        - **Linux AMD64 (musl)**: `vless-rust-linux-amd64-musl` - 完全静态链接，推荐使用
-        - **Linux AMD64 (gnu)**: `vless-rust-linux-amd64-gnu` - glibc 静态链接
-        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux
-        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux (Raspberry Pi等)
-        - **macOS AMD64**: `vless-rust-macos-amd64` - Intel Mac
-        - **macOS ARM64**: `vless-rust-macos-arm64` - Apple Silicon Mac
+        - **Linux AMD64**: `vless-rust-linux-amd64` - x86_64 架构 Linux（通用）
+        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux（树莓派 4+、云服务器等）
+        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux（树莓派 3 及以下）
 
         ### 使用方法
 
@@ -311,7 +295,7 @@ jobs:
 
         ### 验证静态链接
 
-        Linux/macOS 用户可以使用以下命令验证：
+        Linux 用户可以使用以下命令验证：
         \`\`\`bash
         file vless-rust-xxx
         ldd vless-rust-xxx 2>&1 | grep "not a dynamic" && echo "✓ 静态链接"
@@ -320,8 +304,7 @@ jobs:
         ### 系统要求
 
         - **Windows**: Windows 7 或更高版本
-        - **Linux**: 内核 3.2+ (任何发行版)
-        - **macOS**: macOS 10.13 (High Sierra) 或更高版本
+        - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
         EOF
 
         cat release_notes.md

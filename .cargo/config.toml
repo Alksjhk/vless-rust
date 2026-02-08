@@ -6,31 +6,14 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
-# Windows 静态链接配置 (ARM64)
-[target.aarch64-pc-windows-msvc]
+# Linux 静态链接配置（musl - x86_64）
+[target.x86_64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
 
-# Linux 静态链接配置（musl - x86_64，推荐用于完全静态链接）
-[target.x86_64-unknown-linux-musl]
-rustflags = ["-C", "link-self-contained=yes"]
+# Linux 静态链接配置（musl - aarch64）
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
 
-# Linux 静态链接配置（gnu - x86_64）
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-self-contained=yes"]
-
-# Linux 静态链接配置（gnu - aarch64）
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-self-contained=yes"]
-
-# Linux 静态链接配置（gnueabihf - ARMv7）
-[target.armv7-unknown-linux-gnueabihf]
-rustflags = ["-C", "link-self-contained=yes"]
-
-# macOS 配置（x86_64）
-# macOS 默认静态链接系统库，无需特殊配置
-[target.x86_64-apple-darwin]
-rustflags = []
-
-# macOS 配置（aarch64 - Apple Silicon）
-[target.aarch64-apple-darwin]
-rustflags = []
+# Linux 静态链接配置（musl - ARMv7）
+[target.armv7-unknown-linux-musleabihf]
+rustflags = ["-C", "target-feature=+crt-static"]
