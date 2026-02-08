@@ -328,13 +328,3 @@ jobs:
         fail_on_unmatched_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push tag to repository
-      run: |
-        TAG_NAME="${{ needs.extract-version.outputs.tag_name }}"
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git tag -a "$TAG_NAME" -m "Release ${{ needs.extract-version.outputs.version }}"
-        git push origin "$TAG_NAME"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
