@@ -17,7 +17,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **内存信息**: 自研跨平台模块 (Linux/Windows)
 - **时间处理**: 自研 RFC3339 格式化模块
 - **Base64 编码**: 自研实现 (RFC 4648)
-- **HTTP 客户端**: reqwest (native-tls)
+- **HTTP 客户端**: reqwest (rustls-tls)
 
 ### 前端
 - **框架**: React 18 (Hooks)
@@ -115,7 +115,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | 文件路径 | 核心功能 | 说明 |
 |---------|---------|------|
 | `Cargo.toml` | Rust 项目配置 | 依赖项、编译优化、二进制配置 |
-| `.cargo/config.toml` | Cargo 编译配置 | Windows 静态链接选项 |
+| `.cargo/config.toml` | Cargo 编译配置 | 静态链接选项、跨平台编译配置 |
 | `config.json` | 运行时配置 | 服务器、用户、监控、性能参数（自动生成） |
 
 ### 文档文件
@@ -641,6 +641,73 @@ cargo build --release
 # 3. 运行
 ./target/release/vless.exe
 ```
+
+### 跨平台编译
+
+项目支持多平台交叉编译,所有配置已在 `.cargo/config.toml` 中预设。
+
+#### 支持的目标平台
+
+| 目标平台 | 说明 |
+|---------|------|
+| `x86_64-pc-windows-msvc` | Windows 64位 |
+| `x86_64-unknown-linux-gnu` | Linux 64位 (GNU) |
+| `aarch64-unknown-linux-gnu` | Linux ARM64 (GNU) |
+
+#### Windows 交叉编译到 Linux
+
+```bash
+# 1. 添加 Linux 目标
+rustup target add x86_64-unknown-linux-gnu
+
+# 2. 构建前端
+cd frontend && npm run build && cd ..
+
+# 3. 交叉编译
+cargo build --release --target x86_64-unknown-linux-gnu
+
+# 输出: target/x86_64-unknown-linux-gnu/release/vless
+```
+
+#### 交叉编译到 ARM64
+
+```bash
+# 1. 添加 ARM64 目标
+rustup target add aarch64-unknown-linux-gnu
+
+# 2. 安装交叉编译工具链
+# Ubuntu/Debian:
+sudo apt-get install gcc-aarch64-linux-gnu
+
+# 3. 构建前端
+cd frontend && npm run build && cd ..
+
+# 4. 交叉编译
+cargo build --release --target aarch64-unknown-linux-gnu
+
+# 输出: target/aarch64-unknown-linux-gnu/release/vless
+```
+
+#### 静态链接说明
+
+项目使用静态链接,生成的二进制文件无需额外依赖:
+
+- **Windows**: 使用 `target-feature=+crt-static`
+- **Linux**: 使用 `link-self-contained=yes`
+- **TLS**: 使用 `rustls-tls` (纯 Rust 实现,无 OpenSSL 依赖)
+
+配置文件位置: `.cargo/config.toml`
+
+#### GitHub Actions 自动构建
+
+项目配置了 GitHub Actions 工作流,自动构建所有支持的平台:
+
+- 触发条件: 推送 tag (`v*`) 或 PR 到 `main` 分支
+- 构建平台: Windows AMD64、Linux AMD64、Linux ARM64
+- 输出: 静态链接的可执行文件
+- Release: 自动创建 GitHub Release 并上传二进制文件
+
+配置文件: `.github/workflows/build.yml`
 
 ## 参考资料
 
