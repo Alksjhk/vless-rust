@@ -3,12 +3,34 @@
  */
 import { CpuChipIcon, ServerIcon } from '@heroicons/react/24/outline'
 import useMonitorStore from '../store/monitorStore'
+import { memo, useMemo } from 'react'
 
-export default function ResourceCard() {
+const ResourceCard = memo(function ResourceCard() {
   const { memoryUsage, activeConnections, maxConnections, getMemoryPercent } = useMonitorStore()
 
-  const memoryPercent = getMemoryPercent()
-  const connectionPercent = Math.round((activeConnections / maxConnections) * 100)
+  const memoryPercent = useMemo(() => getMemoryPercent(), [memoryUsage, getMemoryPercent])
+  const connectionPercent = useMemo(() =>
+    maxConnections > 0 ? Math.round((activeConnections / maxConnections) * 100) : 0,
+    [activeConnections, maxConnections]
+  )
+
+  const memoryColorClass = useMemo(() =>
+    memoryPercent < 50
+      ? 'from-green-400 to-green-500'
+      : memoryPercent < 75
+        ? 'from-yellow-400 to-yellow-500'
+        : 'from-red-400 to-red-500',
+    [memoryPercent]
+  )
+
+  const connectionColorClass = useMemo(() =>
+    connectionPercent < 50
+      ? 'from-blue-400 to-blue-500'
+      : connectionPercent < 75
+        ? 'from-yellow-400 to-yellow-500'
+        : 'from-red-400 to-red-500',
+    [connectionPercent]
+  )
 
   return (
     <div className="glass-card p-6">
@@ -28,13 +50,7 @@ export default function ResourceCard() {
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
             <div
-              className={`h-full bg-gradient-to-r ${
-                memoryPercent < 50
-                  ? 'from-green-400 to-green-500'
-                  : memoryPercent < 75
-                  ? 'from-yellow-400 to-yellow-500'
-                  : 'from-red-400 to-red-500'
-              } transition-all duration-500`}
+              className={`h-full bg-gradient-to-r ${memoryColorClass} transition-all duration-500`}
               style={{ width: `${Math.min(memoryPercent, 100)}%` }}
             />
           </div>
@@ -54,13 +70,7 @@ export default function ResourceCard() {
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
             <div
-              className={`h-full bg-gradient-to-r ${
-                connectionPercent < 50
-                  ? 'from-blue-400 to-blue-500'
-                  : connectionPercent < 75
-                  ? 'from-yellow-400 to-yellow-500'
-                  : 'from-red-400 to-red-500'
-              } transition-all duration-500`}
+              className={`h-full bg-gradient-to-r ${connectionColorClass} transition-all duration-500`}
               style={{ width: `${Math.min(connectionPercent, 100)}%` }}
             />
           </div>
@@ -69,4 +79,6 @@ export default function ResourceCard() {
       </div>
     </div>
   )
-}
+})
+
+export default ResourceCard

@@ -98,16 +98,16 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 |---------|---------|----------|
 | `frontend/src/App.jsx` | 主应用容器、布局 | `<App>` - 仪表板布局 |
 | `frontend/src/main.jsx` | 应用入口、React 挂载 | `ReactDOM.createRoot()` - 初始化 React 应用 |
-| `frontend/src/store/monitorStore.js` | Zustand 全局状态 | `useMonitorStore()` - 监控数据状态管理 |
-| `frontend/src/api/websocket.js` | WebSocket 连接管理 | `WebSocketClient` - 实时数据连接（智能降级） |
-| `frontend/src/api/rest.js` | REST API 封装 | `fetchStats()` - API 请求函数 |
+| `frontend/src/components/metrics/ConnectionsMetric.jsx` | 活跃连接显示 | `<ConnectionsMetric>` - 连接数统计（React.memo优化） |
+| `frontend/src/components/metrics/SpeedMetric.jsx` | 实时速度显示 | `<SpeedMetric>` - 上传/下载速度（React.memo优化） |
+| `frontend/src/components/metrics/TrafficMetric.jsx` | 总流量显示 | `<TrafficMetric>` - 总流量统计（React.memo优化） |
+| `frontend/src/components/metrics/MemoryMetric.jsx` | 内存使用显示 | `<MemoryMetric>` - 内存使用量（React.memo优化） |
+| `frontend/src/components/metrics/UptimeMetric.jsx` | 运行时间显示 | `<UptimeMetric>` - 服务器运行时长（React.memo优化） |
 | `frontend/src/components/charts/SpeedChart.jsx` | 流量趋势图表 | `<SpeedChart>` - Victory 实现，动态Y轴，ResizeObserver响应式宽度 |
 | `frontend/src/components/charts/TrafficChartSection.jsx` | 图表容器组件 | `<TrafficChartSection>` - 连接状态、历史时长显示 |
-| `frontend/src/components/SpeedCard.jsx` | 实时速度显示 | `<SpeedCard>` - 上传/下载速度 |
-| `frontend/src/components/TrafficCard.jsx` | 总流量显示 | `<TrafficCard>` - 总流量统计 |
-| `frontend/src/components/UptimeCard.jsx` | 运行时间显示 | `<UptimeCard>` - 服务器运行时长 |
-| `frontend/src/components/ResourceCard.jsx` | 资源使用显示 | `<ResourceCard>` - 内存和连接数 |
-| `frontend/src/components/SystemInfo.jsx` | 系统信息面板 | `<SystemInfo>` - 服务器状态总览 |
+| `frontend/src/components/ResourceCard.jsx` | 资源使用显示 | `<ResourceCard>` - 内存和连接数（React.memo优化） |
+| `frontend/src/components/SystemInfo.jsx` | 系统信息面板 | `<SystemInfo>` - 服务器状态总览（React.memo优化） |
+| `frontend/src/utils/debounce.js` | 防抖和节流工具 | `debounce()`, `throttle()` - 性能优化工具函数 |
 | `frontend/src/components/UserTable.jsx` | 用户流量统计 | `<UserTable>` - 用户级别流量表格 |
 
 ### 配置文件

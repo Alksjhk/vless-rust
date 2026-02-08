@@ -56,7 +56,7 @@ function TrafficChartSection() {
         </div>
       </CardHeader>
       <CardContent className="pt-2">
-        <SpeedChart speedHistory={speedHistory} showArea={true} height={400} />
+        <SpeedChart speedHistory={speedHistory} showArea={true} height={500} />
       </CardContent>
     </Card>
   )

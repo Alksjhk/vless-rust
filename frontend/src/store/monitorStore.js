@@ -1,9 +1,11 @@
 /**
  * 监控数据状态管理
  * 使用 Zustand 管理全局状态
+ * 集成 WebSocket 协调器实现多标签页连接共享
  */
 import { create } from 'zustand'
 import { createWebSocketClient } from '../api/websocket'
+import { createWebSocketCoordinator } from '../api/ws-coordinator'
 import * as API from '../api/rest'
 
 const useMonitorStore = create((set, get) => ({
@@ -31,7 +33,8 @@ const useMonitorStore = create((set, get) => ({
   isLoading: true,
   error: null,
 
-  // ==================== WebSocket 客户端 ====================
+  // ==================== WebSocket 协调器 ====================
+  coordinator: null,
   wsClient: null,
   pollingInterval: null,
 
@@ -114,13 +117,13 @@ const useMonitorStore = create((set, get) => ({
   },
 
   /**
-   * 连接 WebSocket
+   * 连接 WebSocket（使用协调器实现多标签页共享）
    */
   connect: () => {
-    const wsClient = createWebSocketClient()
+    const coordinator = createWebSocketCoordinator()
 
-    // 消息处理器
-    const handleMessage = (message) => {
+    // 数据处理回调
+    const handleData = (message) => {
       if (message.type === 'history') {
         // 初始化历史数据（连接建立时的完整历史）
         get().updateHistory(message.payload)
@@ -134,39 +137,46 @@ const useMonitorStore = create((set, get) => ({
       }
     }
 
-    wsClient.onMessage(handleMessage)
+    // 初始化协调器
+    coordinator.init(handleData)
 
-    // 连接
-    const success = wsClient.connect()
-
-    if (!success) {
-      // WebSocket 连接失败，启动轮询
-      console.log('[Monitor] WebSocket 连接失败，启动 API 轮询')
-      get().startPolling()
-      return
-    }
-
-    set({
-      wsClient,
-      isConnected: true,
-      isPolling: false,
-    })
-
-    // 等待连接，检查是否真的连接成功
+    // 检查是否成为主连接
     setTimeout(() => {
-      if (!wsClient.isConnected) {
-        console.log('[Monitor] WebSocket 未连接，启动 API 轮询')
+      const status = coordinator.getStatus()
+
+      if (status.isMaster) {
+        // 主连接：使用 WebSocket
+        console.log('[Monitor] 主连接模式，使用 WebSocket')
+        set({
+          coordinator,
+          isConnected: status.hasWebSocket,
+          isPolling: false,
+        })
+      } else {
+        // 从连接：直接使用轮询
+        console.log('[Monitor] 从连接模式，使用 API 轮询')
         get().startPolling()
+        set({
+          coordinator,
+          isConnected: false,
+          isPolling: true,
+        })
       }
-    }, 3000)
+    }, 1000) // 等待选举完成
   },
 
   /**
    * 断开连接
    */
   disconnect: () => {
-    const { wsClient, pollingInterval } = get()
+    const { coordinator, wsClient, pollingInterval } = get()
 
+    // 销毁协调器
+    if (coordinator) {
+      coordinator.destroy()
+    }
+
+    // 兼容旧的 wsClient
     if (wsClient) {
       wsClient.disconnect()
     }
@@ -176,6 +186,7 @@ const useMonitorStore = create((set, get) => ({
     }
 
     set({
+      coordinator: null,
       wsClient: null,
       isConnected: false,
       isPolling: false,

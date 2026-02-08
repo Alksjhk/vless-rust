@@ -1,8 +1,9 @@
 import { MemoryStick } from 'lucide-react'
 import MetricCard from './MetricCard'
 import useMonitorStore from '../../store/monitorStore'
+import { memo } from 'react'
 
-export default function MemoryMetric() {
+const MemoryMetric = memo(function MemoryMetric() {
   const { memoryUsage } = useMonitorStore()
 
   return (
@@ -17,4 +18,6 @@ export default function MemoryMetric() {
       }
     />
   )
-}
+})
+
+export default MemoryMetric

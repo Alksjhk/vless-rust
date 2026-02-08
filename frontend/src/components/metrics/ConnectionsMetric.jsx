@@ -2,22 +2,23 @@ import { Users } from 'lucide-react'
 import MetricCard from './MetricCard'
 import { Progress } from '../ui/progress'
 import useMonitorStore from '../../store/monitorStore'
-import { parseSpeedString } from '../../utils/formatters'
+import { useMemo } from 'react'
 
 export default function ConnectionsMetric() {
   const { activeConnections, maxConnections } = useMonitorStore()
 
-  const connectionPercent = maxConnections > 0
-    ? Math.round((activeConnections / maxConnections) * 100)
-    : 0
+  const connectionPercent = useMemo(() =>
+    maxConnections > 0
+      ? Math.round((activeConnections / maxConnections) * 100)
+      : 0,
+    [activeConnections, maxConnections]
+  )
 
-  const getConnectionStatus = (percent) => {
-    if (percent < 50) return { variant: 'success', text: '正常' }
-    if (percent < 80) return { variant: 'warning', text: '繁忙' }
+  const status = useMemo(() => {
+    if (connectionPercent < 50) return { variant: 'success', text: '正常' }
+    if (connectionPercent < 80) return { variant: 'warning', text: '繁忙' }
     return { variant: 'destructive', text: '告警' }
-  }
-
-  const status = getConnectionStatus(connectionPercent)
+  }, [connectionPercent])
 
   return (
     <MetricCard

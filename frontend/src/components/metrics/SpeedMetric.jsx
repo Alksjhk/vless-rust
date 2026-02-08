@@ -1,8 +1,9 @@
 import { ArrowUp, ArrowDown } from 'lucide-react'
 import MetricCard from './MetricCard'
 import useMonitorStore from '../../store/monitorStore'
+import { memo } from 'react'
 
-export default function SpeedMetric() {
+const SpeedMetric = memo(function SpeedMetric() {
   const { uploadSpeed, downloadSpeed } = useMonitorStore()
 
   return (
@@ -23,4 +24,6 @@ export default function SpeedMetric() {
       description="上传 / 下载速度"
     />
   )
-}
+})
+
+export default SpeedMetric

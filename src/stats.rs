@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -18,6 +19,7 @@ pub struct MonitorData {
     pub total_memory: String,
     pub active_connections: usize,
     pub max_connections: usize,
+    pub rejected_connections: u64, // 拒绝的连接总数
     pub public_ip: String,         // 服务器公网IP
     pub users: Vec<UserMonitorData>,
 }
@@ -80,6 +82,7 @@ pub struct Stats {
     config: MonitoringConfig,
     user_stats: std::collections::HashMap<String, UserStats>,
     public_ip: String,            // 服务器公网IP
+    rejected_connections: Arc<AtomicU64>, // 拒绝的连接数（原子操作）
 }
 
 impl Stats {
@@ -108,6 +111,7 @@ impl Stats {
             config: monitoring_config,
             user_stats: HashMap::new(),
             public_ip,
+            rejected_connections: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -189,6 +193,18 @@ impl Stats {
         if self.active_connections > 0 {
             self.active_connections -= 1;
         }
+    }
+
+    pub fn get_active_connections(&self) -> usize {
+        self.active_connections
+    }
+
+    pub fn increment_rejected_connections(&self) {
+        self.rejected_connections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn get_rejected_connections(&self) -> u64 {
+        self.rejected_connections.load(Ordering::Relaxed)
     }
 
     pub fn get_uptime(&self) -> Duration {
@@ -401,6 +417,7 @@ impl Stats {
             total_memory: format_bytes(self.get_total_memory()),
             active_connections: self.active_connections,
             max_connections: self.config.vless_max_connections,
+            rejected_connections: self.get_rejected_connections(),
             public_ip: self.public_ip.clone(),
             users,
         }

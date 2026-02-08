@@ -146,7 +146,7 @@ function SpeedChart({ speedHistory, showArea = true, height = 400 }) {
         theme={VictoryTheme.material}
         width={chartWidth}
         height={height}
-        padding={{ top: 20, right: 40, bottom: 60, left: 60 }}
+        padding={{ top: 20, right: 30, bottom: 50, left: 55 }}
         containerComponent={
           <VictoryVoronoiContainer
             voronoiDimension="x"

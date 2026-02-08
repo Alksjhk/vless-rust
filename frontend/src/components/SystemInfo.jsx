@@ -3,8 +3,37 @@
  */
 import { ServerIcon, GlobeAltIcon, ClockIcon } from '@heroicons/react/24/outline'
 import useMonitorStore from '../store/monitorStore'
+import { memo } from 'react'
 
-export default function SystemInfo() {
+// 颜色类配置（移到组件外部，避免每次渲染重新创建）
+const colorClasses = {
+  green: {
+    bg: 'bg-green-500',
+    gradient: 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20',
+    border: 'border-green-100 dark:border-green-800',
+    text: 'text-green-600 dark:text-green-400',
+  },
+  blue: {
+    bg: 'bg-blue-500',
+    gradient: 'from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20',
+    border: 'border-blue-100 dark:border-blue-800',
+    text: 'text-blue-600 dark:text-blue-400',
+  },
+  yellow: {
+    bg: 'bg-yellow-500',
+    gradient: 'from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20',
+    border: 'border-yellow-100 dark:border-yellow-800',
+    text: 'text-yellow-600 dark:text-yellow-400',
+  },
+  red: {
+    bg: 'bg-red-500',
+    gradient: 'from-red-50 to-rose-50 dark:from-red-900/20 dark:to-rose-900/20',
+    border: 'border-red-100 dark:border-red-800',
+    text: 'text-red-600 dark:text-red-400',
+  },
+}
+
+const SystemInfo = memo(function SystemInfo() {
   const { maxConnections, uptime, publicIp } = useMonitorStore()
 
   const stats = [
@@ -21,33 +50,6 @@ export default function SystemInfo() {
       color: 'blue',
     },
   ]
-
-  const colorClasses = {
-    green: {
-      bg: 'bg-green-500',
-      gradient: 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20',
-      border: 'border-green-100 dark:border-green-800',
-      text: 'text-green-600 dark:text-green-400',
-    },
-    blue: {
-      bg: 'bg-blue-500',
-      gradient: 'from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20',
-      border: 'border-blue-100 dark:border-blue-800',
-      text: 'text-blue-600 dark:text-blue-400',
-    },
-    yellow: {
-      bg: 'bg-yellow-500',
-      gradient: 'from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20',
-      border: 'border-yellow-100 dark:border-yellow-800',
-      text: 'text-yellow-600 dark:text-yellow-400',
-    },
-    red: {
-      bg: 'bg-red-500',
-      gradient: 'from-red-50 to-rose-50 dark:from-red-900/20 dark:to-rose-900/20',
-      border: 'border-red-100 dark:border-red-800',
-      text: 'text-red-600 dark:text-red-400',
-    },
-  }
 
   return (
     <div className="glass-card p-6 h-full">
@@ -103,4 +105,6 @@ export default function SystemInfo() {
       </div>
     </div>
   )
-}
+})
+
+export default SystemInfo

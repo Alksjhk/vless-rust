@@ -1,8 +1,9 @@
 import { Clock } from 'lucide-react'
 import MetricCard from './MetricCard'
 import useMonitorStore from '../../store/monitorStore'
+import { memo } from 'react'
 
-export default function UptimeMetric() {
+const UptimeMetric = memo(function UptimeMetric() {
   const { uptime } = useMonitorStore()
 
   return (
@@ -13,4 +14,6 @@ export default function UptimeMetric() {
       description="服务器持续运行时长"
     />
   )
-}
+})
+
+export default UptimeMetric

@@ -1,8 +1,9 @@
 import { HardDrive } from 'lucide-react'
 import MetricCard from './MetricCard'
 import useMonitorStore from '../../store/monitorStore'
+import { memo } from 'react'
 
-export default function TrafficMetric() {
+const TrafficMetric = memo(function TrafficMetric() {
   const { totalTraffic } = useMonitorStore()
 
   return (
@@ -13,4 +14,6 @@ export default function TrafficMetric() {
       description="累计传输数据总量"
     />
   )
-}
+})
+
+export default TrafficMetric
