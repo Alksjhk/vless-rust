@@ -161,6 +161,7 @@ jobs:
 
     # 编译 Rust 项目
     - name: Build release binary
+      shell: bash
       run: |
         # Linux musl 目标启用静态链接
         if [[ "${{ matrix.target }}" == *"musl"* ]]; then
@@ -191,6 +192,7 @@ jobs:
 
     # 显示二进制信息
     - name: Display binary info
+      shell: bash
       run: |
         binary="target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
         echo "=== Binary information ==="
@@ -229,6 +231,7 @@ jobs:
         find artifacts -type f -executable -o -name "*.exe"
 
     - name: Prepare release assets
+      shell: bash
       run: |
         mkdir -p release
         echo "=== Processing artifacts ==="
