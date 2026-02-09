@@ -17,7 +17,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **内存信息**: 自研跨平台模块 (Linux/Windows)
 - **时间处理**: 自研 RFC3339 格式化模块
 - **Base64 编码**: 自研实现 (RFC 4648)
-- **HTTP 客户端**: reqwest (native-tls)
+- **HTTP 客户端**: reqwest (rustls-tls)
 
 ### 前端
 - **框架**: React 18 (Hooks)
@@ -115,7 +115,8 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | 文件路径 | 核心功能 | 说明 |
 |---------|---------|------|
 | `Cargo.toml` | Rust 项目配置 | 依赖项、编译优化、二进制配置 |
-| `.cargo/config.toml` | Cargo 编译配置 | Windows 静态链接选项 |
+| `.cargo/config.toml` | Cargo 编译配置 | 静态链接选项、跨平台编译配置（Windows/Linux/macOS） |
+| `.github/workflows/build.yml` | CI/CD 工作流 | 跨平台自动构建、Release 发布、静态链接验证 |
 | `config.json` | 运行时配置 | 服务器、用户、监控、性能参数（自动生成） |
 
 ### 文档文件
@@ -641,6 +642,137 @@ cargo build --release
 # 3. 运行
 ./target/release/vless.exe
 ```
+
+### 跨平台编译
+
+项目支持多平台交叉编译,所有配置已在 `.cargo/config.toml` 中预设。
+
+#### 支持的目标平台
+
+| 目标平台 | 架构 | 说明 |
+|---------|------|------|
+| `x86_64-pc-windows-msvc` | AMD64 | Windows 64位 |
+| `aarch64-pc-windows-msvc` | ARM64 | Windows ARM64 |
+| `x86_64-unknown-linux-musl` | AMD64 | Linux 64位 (完全静态链接，推荐) |
+| `x86_64-unknown-linux-gnu` | AMD64 | Linux 64位 (GNU) |
+| `aarch64-unknown-linux-gnu` | ARM64 | Linux ARM64 (GNU) |
+| `armv7-unknown-linux-gnueabihf` | ARMv7 | Linux ARM 32位 |
+| `x86_64-apple-darwin` | AMD64 | macOS Intel |
+| `aarch64-apple-darwin` | ARM64 | macOS Apple Silicon |
+
+#### Windows 交叉编译到 Linux
+
+```bash
+# 1. 添加 Linux 目标
+rustup target add x86_64-unknown-linux-gnu
+
+# 2. 构建前端
+cd frontend && npm run build && cd ..
+
+# 3. 交叉编译
+cargo build --release --target x86_64-unknown-linux-gnu
+
+# 输出: target/x86_64-unknown-linux-gnu/release/vless
+```
+
+#### 交叉编译到 ARM64
+
+```bash
+# 1. 添加 ARM64 目标
+rustup target add aarch64-unknown-linux-gnu
+
+# 2. 安装交叉编译工具链
+# Ubuntu/Debian:
+sudo apt-get install gcc-aarch64-linux-gnu
+
+# 3. 构建前端
+cd frontend && npm run build && cd ..
+
+# 4. 交叉编译
+cargo build --release --target aarch64-unknown-linux-gnu
+
+# 输出: target/aarch64-unknown-linux-gnu/release/vless
+```
+
+#### 静态链接说明
+
+项目使用静态链接,生成的二进制文件无需额外依赖:
+
+- **Windows**: 使用 `target-feature=+crt-static`
+- **Linux**: 使用 `link-self-contained=yes`
+- **TLS**: 使用 `rustls-tls` (纯 Rust 实现,无 OpenSSL 依赖)
+
+配置文件位置: `.cargo/config.toml`
+
+#### GitHub Actions 自动构建
+
+项目配置了完整的 GitHub Actions CI/CD 工作流,实现跨平台静态链接构建:
+
+**工作流特性**:
+- **触发条件**:
+  - 推送提交到 `main` 分支 → 自动识别版本号并构建
+  - PR 到 `main` 分支 → 仅构建测试（不发布）
+  - 手动触发 (`workflow_dispatch`) → 方便测试
+
+- **版本识别机制**:
+  - 自动从提交信息中提取版本号（格式：`x.x.x`，如 `1.0.0`）
+  - 提交信息必须以版本号开头
+  - 如果有多个版本提交，只构建最新的未发布版本
+  - 自动检查 Release 是否已存在，避免重复构建
+
+- **支持平台** (8个):
+  - Windows AMD64 + ARM64
+  - Linux AMD64 (musl/gnu) + ARM64 + ARMv7
+  - macOS Intel + Apple Silicon
+
+- **构建流程**:
+  1. 分析提交历史，提取版本号
+  2. 检查 Release 是否已存在（去重）
+  3. 安装 Rust 工具链和交叉编译工具
+  4. 构建前端资源 (Node.js 20)
+  5. 编译 Rust 二进制文件
+  6. 验证静态链接 (Linux 平台)
+  7. 上传构建产物
+  8. 创建 GitHub Release（版本号：vx.x.x）
+  9. 自动推送标签到仓库
+
+- **静态链接验证**:
+  ```bash
+  # Linux 平台自动验证
+  ldd vless-rust-xxx | grep "not a dynamic" && echo "✓ 静态链接"
+  ```
+
+- **输出文件命名**:
+  - Windows: `vless-rust-windows-amd64.exe`
+  - Linux musl: `vless-rust-linux-amd64-musl`
+  - macOS ARM64: `vless-rust-macos-arm64`
+  - 格式: `vless-rust-{平台}-{架构}{扩展名}`
+
+**配置文件**: `.github/workflows/build.yml`
+
+**使用示例**:
+
+```bash
+# 方式一：提交版本号（推荐）
+git commit -m "1.0.0"
+git push origin main
+
+# 方式二：创建空提交触发特定版本
+git commit --allow-empty -m "1.5.12"
+git push origin main
+
+# 工作流会自动：
+# 1. 识别版本号 1.0.0 或 1.5.12
+# 2. 构建 8 个平台
+# 3. 创建 Release v1.0.0 或 v1.5.12
+# 4. 推送标签 v1.0.0 或 v1.5.12
+```
+
+**版本识别规则**:
+- ✅ `1.0.0` - 正确
+- ✅ `1.5.12` - 正确
+- ❌ `Release 1.0.0` - 错误（不在行首）
+- ❌ `v1.0.0` - 错误（有 v 前缀）
 
 ## 参考资料
 

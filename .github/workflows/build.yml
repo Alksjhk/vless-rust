@@ -1,94 +1,230 @@
-name: Build Multi-Platform
+name: Build Multi-Platform Static
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
+  # 提取版本号并判断是否需要构建
+  extract-version:
+    name: Extract Version from Commit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_build: ${{ steps.check-version.outputs.should_build }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Extract version from commit messages
+      id: version
+      run: |
+        echo "=== Analyzing commits since last release ==="
+
+        # 获取最新的 Release 标签（如果存在）
+        LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        if [ -n "$LATEST_TAG" ]; then
+          echo "Latest release tag: $LATEST_TAG"
+          # 获取自上次 Release 之后的提交
+          COMMITS=$(git log $LATEST_TAG..HEAD --pretty=format:"%s" --reverse)
+        else
+          echo "No previous release found"
+          # 获取所有提交
+          COMMITS=$(git log --pretty=format:"%s" --reverse)
+        fi
+
+        echo "Commits analyzed:"
+        echo "$COMMITS"
+        echo ""
+
+        # 从提交信息中查找版本号（格式：x.x.x 或 x.x.xx）
+        # 查找第一个匹配的版本号（只提取数字部分，不包括描述文字）
+        VERSION=$(echo "$COMMITS" | grep -m 1 -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+
+        if [ -n "$VERSION" ]; then
+          echo "✓ Found version in commit: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
+        else
+          echo "✗ No version found in commit messages"
+          echo "version=none" >> $GITHUB_OUTPUT
+          echo "tag_name=none" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check if version already exists
+      id: check-version
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        TAG_NAME="${{ steps.version.outputs.tag_name }}"
+
+        if [ "$VERSION" == "none" ]; then
+          echo "No version to build"
+          echo "should_build=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # 检查该版本的 Release 是否已存在
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG_NAME")
+
+        if [ "$HTTP_STATUS" == "200" ]; then
+          echo "⚠ Release $TAG_NAME already exists, skipping build"
+          echo "should_build=false" >> $GITHUB_OUTPUT
+        else
+          echo "✓ Release $TAG_NAME does not exist, will build"
+          echo "should_build=true" >> $GITHUB_OUTPUT
+        fi
+
   build:
     name: Build for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    needs: extract-version
+    if: needs.extract-version.outputs.should_build == 'true'
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # Windows x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: vless
+            artifact_name: vless.exe
             asset_name: vless-rust-windows-amd64
-            link_type: static
+          # Linux x64 (musl - 完全静态链接)
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             artifact_name: vless
             asset_name: vless-rust-linux-amd64
-            link_type: static
+          # Linux ARM64 (musl - 完全静态链接)
           - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             artifact_name: vless
             asset_name: vless-rust-linux-arm64
-            link_type: static
+          # Linux ARMv7 (musl - 完全静态链接)
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
+            artifact_name: vless
+            asset_name: vless-rust-linux-armv7
 
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install Rust
+
+    - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
-    
-    - name: Install cross-compilation tools (Linux ARM64)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
+
+    # Linux musl 需要安装 musl 工具链和交叉编译工具
+    - name: Install musl tools (Linux)
+      if: startsWith(matrix.target, 'x86_64-unknown-linux-musl')
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-    
-    - name: Configure static linking for Linux
-      if: matrix.link_type == 'static'
-      run: |
-        echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+        sudo apt-get install -y musl-tools musl-dev
 
-    - name: Configure static linking for Windows
-      if: matrix.target == 'x86_64-pc-windows-msvc' && matrix.link_type == 'static'
+    # Linux ARM musl 交叉编译工具
+    - name: Install ARM musl cross-compilation tools
+      if: startsWith(matrix.target, 'aarch64-unknown-linux-musl') || matrix.target == 'armv7-unknown-linux-musleabihf'
       run: |
-        echo "RUSTFLAGS=-C target-feature=+crt-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
+        # 为 ARM musl 目标设置链接器环境变量
+        if [ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]; then
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        elif [ "${{ matrix.target }}" == "armv7-unknown-linux-musleabihf" ]; then
+          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+          echo "CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+        fi
+
+    # Node.js 用于前端构建
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
 
+    # 构建前端
     - name: Install frontend dependencies and build
       run: |
         cd frontend
         npm ci
         npm run build
 
-    - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
-    
+    # 编译 Rust 项目
+    - name: Build release binary
+      shell: bash
+      run: |
+        # Linux musl 目标启用静态链接
+        if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+          export RUSTFLAGS="-C target-feature=+crt-static $RUSTFLAGS"
+        fi
+        cargo build --release --target ${{ matrix.target }}
+
+    # 验证静态链接（仅 Linux）
+    - name: Verify static linking (Linux)
+      if: startsWith(matrix.os, 'ubuntu')
+      run: |
+        binary="target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+        echo "=== Checking binary: $binary ==="
+        file "$binary"
+        echo ""
+        echo "=== Dynamic library dependencies ==="
+        ldd "$binary" || echo "ldd failed (not a dynamic executable or static binary)"
+        echo ""
+        echo "=== Check if truly static ==="
+        if ldd "$binary" 2>&1 | grep -q "not a dynamic executable"; then
+          echo "✓ Binary is statically linked"
+        elif ldd "$binary" 2>&1 | grep -E "libc\.so|libpthread\.so|libdl\.so"; then
+          echo "⚠ Warning: Binary may have dynamic glibc dependencies"
+          ldd "$binary"
+        else
+          echo "✓ Binary appears to be statically linked or uses musl"
+        fi
+
+    # 显示二进制信息
+    - name: Display binary info
+      shell: bash
+      run: |
+        binary="target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+        echo "=== Binary information ==="
+        file "$binary"
+        echo ""
+        echo "=== Binary size ==="
+        ls -lh "$binary"
+        echo ""
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.asset_name }}
-        path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
   release:
-    name: Create Release
-    needs: build
+    name: Create Release with Multi-Platform Binaries
+    needs: [extract-version, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.extract-version.outputs.should_build == 'true'
     permissions:
       contents: write
-    
+
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
-    
+
     - name: Display structure of downloaded files
       run: |
         echo "=== Artifacts directory structure ==="
@@ -96,49 +232,99 @@ jobs:
         echo ""
         echo "=== Finding all executables ==="
         find artifacts -type f -executable -o -name "*.exe"
-    
+
     - name: Prepare release assets
+      shell: bash
       run: |
         mkdir -p release
-        echo "=== Copying and renaming artifacts ==="
-        
+        echo "=== Processing artifacts ==="
+
         for dir in artifacts/*/; do
           if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
-            echo "Processing directory: $dirname"
-            
+            echo "Processing: $dirname"
+
             for file in "$dir"*; do
               if [ -f "$file" ]; then
+                # 获取文件名
                 filename=$(basename "$file")
-                echo "Found file: $filename"
-                
+
+                # 根据平台确定扩展名
                 if [[ "$dirname" == *"windows"* ]]; then
-                  new_name="${dirname}.exe"
+                  ext=".exe"
                 else
-                  new_name="$dirname"
+                  ext=""
                 fi
-                
-                echo "Copying $filename to $new_name"
-                cp "$file" "release/$new_name"
+
+                # 目标文件名
+                target_name="${dirname}${ext}"
+
+                echo "  Copying: $filename -> $target_name"
+                cp "$file" "release/$target_name"
+                chmod +x "release/$target_name" 2>/dev/null || true
               fi
             done
           fi
         done
-        
-        echo "=== Setting executable permissions ==="
-        chmod +x release/* 2>/dev/null || true
-        
-        echo "=== Release directory contents ==="
+
+        echo ""
+        echo "=== Release files ==="
         ls -lh release/
-    
-    - name: Create Release
-      uses: ncipollo/release-action@v1
+
+    - name: Generate release notes
+      run: |
+        VERSION="${{ needs.extract-version.outputs.version }}"
+        cat > release_notes.md << EOF
+        ## VLESS-Rust $VERSION
+
+        ### 跨平台静态链接构建
+
+        所有平台的二进制文件均为静态链接构建，无需额外依赖即可运行。
+
+        Linux 版本使用 musl 静态链接，可在各种 Linux 发行版上运行（Alpine、Ubuntu、CentOS、Debian 等）。
+
+        ### 下载说明
+
+        根据您的系统选择对应的文件：
+
+        - **Windows AMD64**: `vless-rust-windows-amd64.exe` - Intel/AMD 64位 Windows
+        - **Linux AMD64**: `vless-rust-linux-amd64` - x86_64 架构 Linux（通用）
+        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux（树莓派 4+、云服务器等）
+        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux（树莓派 3 及以下）
+
+        ### 使用方法
+
+        1. 下载对应平台的二进制文件
+        2. 添加执行权限（Linux/macOS）：`chmod +x vless-rust-*`
+        3. 运行：`./vless-rust-xxx` 或 `vless-rust-xxx.exe`
+        4. 首次运行会自动生成 `config.json` 配置文件
+
+        ### 验证静态链接
+
+        Linux 用户可以使用以下命令验证：
+        \`\`\`bash
+        file vless-rust-xxx
+        ldd vless-rust-xxx 2>&1 | grep "not a dynamic" && echo "✓ 静态链接"
+        \`\`\`
+
+        ### 系统要求
+
+        - **Windows**: Windows 7 或更高版本
+        - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
+        EOF
+
+        cat release_notes.md
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
       with:
-        artifacts: release/*
-        artifactErrorsFailBuild: true
+        tag_name: ${{ needs.extract-version.outputs.tag_name }}
+        name: Release ${{ needs.extract-version.outputs.version }}
+        files: release/*
+        body_path: release_notes.md
         draft: false
         prerelease: false
-        generateReleaseNotes: true
-        makeLatest: true
+        generate_release_notes: true
+        fail_on_unmatched_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
