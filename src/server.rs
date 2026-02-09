@@ -42,6 +42,7 @@ struct ConnectionGuard {
     uuid: Arc<str>,
     _email: Option<Arc<str>>,  // 保留用于日志，但不直接读取
     released: Arc<AtomicBool>,
+    should_increment_on_drop: bool,  // 是否在 drop 时减少连接数（如果构造时已增加则为 false）
 }
 
 impl ConnectionGuard {
@@ -57,6 +58,7 @@ impl ConnectionGuard {
             uuid,
             _email: email,
             released: Arc::new(AtomicBool::new(false)),
+            should_increment_on_drop: false,  // 构造时已增加，drop 时不需要再增加
         }
     }
 }
@@ -66,6 +68,7 @@ impl Drop for ConnectionGuard {
         if !self.released.load(Ordering::SeqCst) {
             let stats = self.stats.clone();
             let uuid = self.uuid.clone();
+            let should_decrement = self.should_increment_on_drop;
             tokio::spawn(async move {
                 let mut stats_guard = stats.write().await;
                 stats_guard.decrement_connections();
@@ -374,7 +377,7 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计，减少锁竞争
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
                             let mut stats_guard = stats_c2t.write().await;
                             stats_guard.add_upload_bytes(batch_total);
@@ -415,7 +418,7 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计，减少锁竞争
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
                             let mut stats_guard = stats_t2c.write().await;
                             stats_guard.add_download_bytes(batch_total);
@@ -520,7 +523,7 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
                             let mut stats_guard = stats_c2t.write().await;
                             stats_guard.add_upload_bytes(batch_total);
@@ -575,7 +578,7 @@ impl VlessServer {
                                 break;
                             }
 
-                            // 批量更新统计
+                            // 批量更新统计，使用单次锁定
                             if batch_total >= batch_size {
                                 let mut stats_guard = stats_t2c.write().await;
                                 stats_guard.add_download_bytes(batch_total);

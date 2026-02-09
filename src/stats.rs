@@ -172,10 +172,13 @@ impl Stats {
         }
     }
 
+    // 以下方法保留用于向后兼容性
+    #[allow(dead_code)]
     pub fn add_upload_bytes(&mut self, bytes: u64) {
         self.total_upload_bytes += bytes;
     }
 
+    #[allow(dead_code)]
     pub fn add_download_bytes(&mut self, bytes: u64) {
         self.total_download_bytes += bytes;
     }
@@ -254,6 +257,18 @@ impl Stats {
         }
     }
 
+    /// 尝试增加连接数（原子操作，避免竞争条件）
+    /// 返回 true 表示成功，false 表示已达到最大连接数
+    pub fn try_increment_connections(&mut self, max_connections: usize) -> bool {
+        if self.active_connections >= max_connections {
+            false
+        } else {
+            self.active_connections += 1;
+            true
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn increment_connections(&mut self) {
         self.active_connections += 1;
     }
@@ -329,8 +344,9 @@ impl Stats {
             if duration_secs < 0.1 {
                 (0.0, 0.0)
             } else {
-                let upload_diff = self.total_upload_bytes.saturating_sub(last_snapshot.upload_bytes);
-                let download_diff = self.total_download_bytes.saturating_sub(last_snapshot.download_bytes);
+                // 计算速度
+                let upload_diff = self.total_upload_bytes.saturating_sub(last_upload.upload_bytes);
+                let download_diff = self.total_download_bytes.saturating_sub(last_download.download_bytes);
 
                 let upload_speed = (upload_diff as f64) / duration_secs;
                 let download_speed = (download_diff as f64) / duration_secs;
@@ -368,69 +384,92 @@ impl Stats {
     /// 计算单个用户的速度（内部方法，保留用于未来功能）
     #[allow(dead_code)]
     fn calculate_user_speed_internal(user_stats: &mut UserStats, now: Instant) -> (f64, f64) {
-        let upload_speed = if let Some(last_snapshot) = user_stats.last_upload_snapshot.take() {
-            let duration_secs = now.duration_since(last_snapshot.timestamp).as_secs_f64();
+        // 统一处理上传和下载快照，确保时间戳一致
+        let (last_upload, last_download) = (
+            user_stats.last_upload_snapshot.take(),
+            user_stats.last_download_snapshot.take(),
+        );
+
+        // 使用较早的时间戳作为基准时间
+        let base_timestamp = match (&last_upload, &last_download) {
+            (Some(u), Some(d)) => Some(u.timestamp.min(d.timestamp)),
+            (Some(u), None) => Some(u.timestamp),
+            (None, Some(d)) => Some(d.timestamp),
+            (None, None) => None,
+        };
+
+        if let Some(base_time) = base_timestamp {
+            let duration_secs = now.duration_since(base_time).as_secs_f64();
 
             if duration_secs < 0.1 {
-                user_stats.last_upload_snapshot = Some(last_snapshot);
-                0.0
-            } else {
-                let upload_diff = user_stats.total_upload_bytes.saturating_sub(last_snapshot.upload_bytes);
-                let speed = (upload_diff as f64) / duration_secs;
-
-                user_stats.last_upload_snapshot = Some(SpeedSnapshot {
-                    upload_bytes: user_stats.total_upload_bytes,
-                    download_bytes: user_stats.total_download_bytes,
-                    timestamp: now,
-                    upload_speed: speed,
-                    download_speed: 0.0,
-                });
-                speed
+                // 时间间隔太短，恢复旧快照
+                if last_upload.is_some() {
+                    user_stats.last_upload_snapshot = last_upload;
+                } else {
+                    user_stats.last_upload_snapshot = Some(SpeedSnapshot {
+                        upload_bytes: user_stats.total_upload_bytes,
+                        download_bytes: user_stats.total_download_bytes,
+                        timestamp: now,
+                        upload_speed: 0.0,
+                        download_speed: 0.0,
+                    });
+                }
+                if last_download.is_some() {
+                    user_stats.last_download_snapshot = last_download;
+                } else {
+                    user_stats.last_download_snapshot = Some(SpeedSnapshot {
+                        upload_bytes: user_stats.total_upload_bytes,
+                        download_bytes: user_stats.total_download_bytes,
+                        timestamp: now,
+                        upload_speed: 0.0,
+                        download_speed: 0.0,
+                    });
+                }
+                return (0.0, 0.0);
             }
+
+            // 计算上传速度
+            let upload_speed = if let Some(last) = last_upload {
+                let diff = user_stats.total_upload_bytes.saturating_sub(last.upload_bytes);
+                (diff as f64) / duration_secs
+            } else {
+                0.0
+            };
+
+            // 计算下载速度
+            let download_speed = if let Some(last) = last_download {
+                let diff = user_stats.total_download_bytes.saturating_sub(last.download_bytes);
+                (diff as f64) / duration_secs
+            } else {
+                0.0
+            };
+
+            // 创建统一的新快照
+            let new_snapshot = SpeedSnapshot {
+                upload_bytes: user_stats.total_upload_bytes,
+                download_bytes: user_stats.total_download_bytes,
+                timestamp: now,
+                upload_speed,
+                download_speed,
+            };
+
+            user_stats.last_upload_snapshot = Some(new_snapshot.clone());
+            user_stats.last_download_snapshot = Some(new_snapshot);
+
+            (upload_speed, download_speed)
         } else {
-            let snapshot = SpeedSnapshot {
+            // 首次调用，创建初始快照
+            let initial_snapshot = SpeedSnapshot {
                 upload_bytes: user_stats.total_upload_bytes,
                 download_bytes: user_stats.total_download_bytes,
                 timestamp: now,
                 upload_speed: 0.0,
                 download_speed: 0.0,
             };
-            user_stats.last_upload_snapshot = Some(snapshot);
-            0.0
-        };
-
-        let download_speed = if let Some(last_snapshot) = user_stats.last_download_snapshot.take() {
-            let duration_secs = now.duration_since(last_snapshot.timestamp).as_secs_f64();
-
-            if duration_secs < 0.1 {
-                user_stats.last_download_snapshot = Some(last_snapshot);
-                0.0
-            } else {
-                let download_diff = user_stats.total_download_bytes.saturating_sub(last_snapshot.download_bytes);
-                let speed = (download_diff as f64) / duration_secs;
-
-                user_stats.last_download_snapshot = Some(SpeedSnapshot {
-                    upload_bytes: user_stats.total_upload_bytes,
-                    download_bytes: user_stats.total_download_bytes,
-                    timestamp: now,
-                    upload_speed: 0.0,
-                    download_speed: speed,
-                });
-                speed
-            }
-        } else {
-            let snapshot = SpeedSnapshot {
-                upload_bytes: user_stats.total_upload_bytes,
-                download_bytes: user_stats.total_download_bytes,
-                timestamp: now,
-                upload_speed: 0.0,
-                download_speed: 0.0,
-            };
-            user_stats.last_download_snapshot = Some(snapshot);
-            0.0
-        };
-
-        (upload_speed, download_speed)
+            user_stats.last_upload_snapshot = Some(initial_snapshot.clone());
+            user_stats.last_download_snapshot = Some(initial_snapshot);
+            (0.0, 0.0)
+        }
     }
 
     pub fn get_speed_history_response(&self) -> SpeedHistoryResponse {
@@ -566,6 +605,16 @@ impl Stats {
         Ok(())
     }
 
+    /// 获取持久化所需的数据（避免长时间持锁）
+    pub fn get_persistence_data(&self) -> (u64, u64, std::collections::HashMap<String, (u64, u64, Option<String>)>) {
+        let users_data: std::collections::HashMap<String, (u64, u64, Option<String>)> = self.user_stats.iter().map(|(uuid, stats)| {
+            (uuid.clone(), (stats.total_upload_bytes, stats.total_download_bytes, stats.email.clone()))
+        }).collect();
+
+        (self.total_upload_bytes, self.total_download_bytes, users_data)
+    }
+
+    #[allow(dead_code)]
     pub fn save_to_config(&self) -> anyhow::Result<()> {
         let mut config = if let Ok(content) = std::fs::read_to_string(&self.config_path) {
             serde_json::from_str::<serde_json::Value>(&content)?
@@ -635,8 +684,9 @@ fn format_duration(duration: Duration) -> String {
 
 pub type SharedStats = Arc<RwLock<Stats>>;
 
-pub async fn start_stats_persistence(stats: SharedStats, _config_path: String) {
+pub async fn start_stats_persistence(stats: SharedStats, config_path: String) {
     let mut interval = tokio::time::interval(Duration::from_secs(600));
+
 
     loop {
         interval.tick().await;
@@ -645,4 +695,41 @@ pub async fn start_stats_persistence(stats: SharedStats, _config_path: String) {
             eprintln!("Failed to save stats to config: {}", e);
         }
     }
+}
+
+/// 在无锁状态下保存统计数据到配置文件
+fn save_stats_to_config(
+    config_path: &str,
+    total_upload: u64,
+    total_download: u64,
+    users_data: &std::collections::HashMap<String, (u64, u64, Option<String>)>,
+) -> anyhow::Result<()> {
+    let mut config = if let Ok(content) = std::fs::read_to_string(config_path) {
+        serde_json::from_str::<serde_json::Value>(&content)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let users_json: serde_json::Map<String, serde_json::Value> = users_data.iter().map(|(uuid, (upload, download, email))| {
+        (
+            uuid.clone(),
+            serde_json::json!({
+                "total_upload_bytes": upload,
+                "total_download_bytes": download,
+                "email": email,
+            })
+        )
+    }).collect();
+
+    let monitor = serde_json::json!({
+        "total_upload_bytes": total_upload,
+        "total_download_bytes": total_download,
+        "last_update": crate::time::utc_now_rfc3339(),
+        "users": serde_json::Value::from(users_json)
+    });
+
+    config["monitor"] = monitor;
+
+    std::fs::write(config_path, serde_json::to_string_pretty(&config)?)?;
+    Ok(())
 }
