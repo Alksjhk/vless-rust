@@ -98,11 +98,7 @@ impl ServerConfig {
         self.user_emails.insert(uuid, email_arc);
     }
 
-    /// 获取用户邮箱（返回 String，保留用于API兼容性）
-    #[allow(dead_code)]
-    pub fn get_user_email(&self, uuid: &Uuid) -> Option<String> {
-        self.user_emails.get(uuid).and_then(|e| e.as_ref().map(|s| s.to_string()))
-    }
+    // Removed unused get_user_email method
 
     /// 获取用户邮箱（返回 Arc<str>，推荐使用）
     pub fn get_user_email_arc(&self, uuid: &Uuid) -> Option<Arc<str>> {
