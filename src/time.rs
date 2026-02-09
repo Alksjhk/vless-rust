@@ -60,11 +60,11 @@ fn format_rfc3339(timestamp: i64) -> String {
     // 使用标准算法计算日期时间
 
     const SECS_PER_MINUTE: i64 = 60;
-    const SECS_PER_HOUR: i64 = 3600;
-    const SECS_PER_DAY: i64 = 86400;
-    const DAYS_PER_400_YEARS: i64 = 146097;
-    const DAYS_PER_100_YEARS: i64 = 36524;
-    const DAYS_PER_4_YEARS: i64 = 1461;
+    const SECS_PER_HOUR: i64 = 3_600;
+    const SECS_PER_DAY: i64 = 86_400;
+    const DAYS_PER_400_YEARS: i64 = 146_097;
+    const DAYS_PER_100_YEARS: i64 = 36_524;
+    const DAYS_PER_4_YEARS: i64 = 1_461;
     const DAYS_PER_NORMAL_YEAR: i64 = 365;
 
     // 计算自 1970-01-01 以来的天数

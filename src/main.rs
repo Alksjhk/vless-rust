@@ -9,6 +9,7 @@ mod wizard;
 mod base64;
 mod memory;
 mod time;
+mod buffer_pool;
 
 use anyhow::Result;
 use config::Config;
@@ -17,8 +18,14 @@ use stats::{Stats, start_stats_persistence};
 use ws::WebSocketManager;
 use std::env;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{info, error, warn};
+
+// 使用 mimalloc 作为全局内存分配器，提升内存分配性能
+// musl 目标不使用 mimalloc，因为与静态链接存在兼容性问题（__memcpy_chk、__memset_chk）
+#[cfg(not(target_env = "musl"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -96,10 +103,10 @@ async fn main() -> Result<()> {
         }
     };
 
-    let stats = Arc::new(Mutex::new(Stats::new(config_path.clone(), monitoring_config.clone(), public_ip.clone())));
+    let stats = Arc::new(RwLock::new(Stats::new(config_path.clone(), monitoring_config.clone(), public_ip.clone())));
 
     // 从配置文件加载统计数据
-    if let Err(e) = stats.lock().await.load_from_config() {
+    if let Err(e) = stats.write().await.load_from_config() {
         info!("No existing stats found: {}", e);
     }
 

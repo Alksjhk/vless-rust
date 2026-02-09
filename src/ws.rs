@@ -128,10 +128,12 @@ pub async fn start_broadcasting_task(ws_manager: SharedWsManager, stats: SharedS
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let mut stats_guard = stats.lock().await;
-                let monitor_data = stats_guard.get_monitor_data();
-                drop(stats_guard);
+                let raw_data = {
+                    let stats_guard = stats.read().await;
+                    stats_guard.get_monitor_data_raw()
+                }; // 锁在这里释放
 
+                let monitor_data = raw_data.format();  // 锁外格式化
                 let msg = WsMessage::Stats(monitor_data);
 
                 let manager = ws_manager.write().await;
@@ -314,7 +316,7 @@ pub async fn handle_websocket_connection(
 
     // Send initial history data
     {
-        let stats_guard = stats.lock().await;
+        let stats_guard = stats.read().await;
         let history = stats_guard.get_speed_history_response();
         drop(stats_guard);
 

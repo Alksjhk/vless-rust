@@ -15,6 +15,9 @@ pub struct MonitoringConfig {
     pub websocket_heartbeat_timeout: u64,
     #[serde(default = "default_vless_max_connections")]
     pub vless_max_connections: usize,
+    /// 不活跃用户超时时间（秒），超过此时间不计算速度，默认60秒
+    #[serde(default = "default_inactive_user_timeout")]
+    pub inactive_user_timeout: u64,
 }
 
 /// 性能优化配置
@@ -41,6 +44,9 @@ pub struct PerformanceConfig {
     /// UDP接收缓冲区大小（字节），默认64KB
     #[serde(default = "default_udp_recv_buffer")]
     pub udp_recv_buffer: usize,
+    /// 缓冲区池大小（缓冲区数量），默认 min(32, CPU核心数*4)
+    #[serde(default = "default_buffer_pool_size")]
+    pub buffer_pool_size: usize,
 }
 
 fn default_history_duration() -> u64 { 120 }
@@ -48,6 +54,7 @@ fn default_broadcast_interval() -> u64 { 1 }
 fn default_ws_max_connections() -> usize { 5 }
 fn default_ws_heartbeat_timeout() -> u64 { 60 }
 fn default_vless_max_connections() -> usize { 1000 }
+fn default_inactive_user_timeout() -> u64 { 60 }
 
 // Performance config defaults
 fn default_buffer_size() -> usize { 128 * 1024 }  // 128KB
@@ -57,6 +64,9 @@ fn default_tcp_nodelay() -> bool { true }
 fn default_stats_batch_size() -> usize { 64 * 1024 }  // 64KB
 fn default_udp_timeout() -> u64 { 30 }
 fn default_udp_recv_buffer() -> usize { 64 * 1024 }  // 64KB
+fn default_buffer_pool_size() -> usize {
+    std::cmp::min(32, std::thread::available_parallelism().map_or(4, |n| n.get() * 4))
+}
 
 impl Default for MonitoringConfig {
     fn default() -> Self {
@@ -66,6 +76,7 @@ impl Default for MonitoringConfig {
             websocket_max_connections: default_ws_max_connections(),
             websocket_heartbeat_timeout: default_ws_heartbeat_timeout(),
             vless_max_connections: default_vless_max_connections(),
+            inactive_user_timeout: default_inactive_user_timeout(),
         }
     }
 }
@@ -80,6 +91,7 @@ impl Default for PerformanceConfig {
             stats_batch_size: default_stats_batch_size(),
             udp_timeout: default_udp_timeout(),
             udp_recv_buffer: default_udp_recv_buffer(),
+            buffer_pool_size: default_buffer_pool_size(),
         }
     }
 }

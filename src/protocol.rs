@@ -23,7 +23,7 @@ impl TryFrom<u8> for Command {
             1 => Ok(Command::Tcp),
             2 => Ok(Command::Udp),
             3 => Ok(Command::Mux),
-            _ => Err(anyhow!("Invalid command: {}", value)),
+            _ => Err(anyhow!("Invalid command: {value}")),
         }
     }
 }

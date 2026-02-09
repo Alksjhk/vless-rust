@@ -3,6 +3,7 @@ use crate::stats::SharedStats;
 use crate::http::{is_http_request, parse_http_request, handle_http_request};
 use crate::ws::{self, SharedWsManager};
 use crate::config::{MonitoringConfig, PerformanceConfig};
+use crate::buffer_pool::BufferPool;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::collections::{HashSet, HashMap};
@@ -21,14 +22,16 @@ async fn configure_tcp_socket(
     _send_buf: usize,
     nodelay: bool,
 ) -> Result<()> {
-    // 设置TCP_NODELAY
+    // 设置TCP_NODELAY，降低延迟
     if nodelay {
         stream.set_nodelay(true)?;
     }
 
-    // 注意：socket缓冲区大小通常由系统自动调优
-    // 在大多数情况下，系统默认值已经足够好
-    // 如果需要手动设置，可以使用socket2库，但会增加复杂度
+    // 注意：TCP 缓冲区大小由系统自动调优
+    // 如需手动调整，可通过系统参数配置：
+    // - Linux: /proc/sys/net/ipv4/tcp_rmem/wmem
+    // - Windows: 注册表 TcpWindowSize 参数
+    // 大多数情况下系统默认值已经足够好（通常 64KB-4MB）
 
     Ok(())
 }
@@ -36,17 +39,23 @@ async fn configure_tcp_socket(
 /// RAII guard for connection counting
 struct ConnectionGuard {
     stats: SharedStats,
-    uuid: String,
+    uuid: Arc<str>,
+    _email: Option<Arc<str>>,  // 保留用于日志，但不直接读取
     released: Arc<AtomicBool>,
 }
 
 impl ConnectionGuard {
-    async fn new(stats: SharedStats, uuid: String, email: Option<String>) -> Self {
-        stats.lock().await.increment_connections();
-        stats.lock().await.increment_user_connection(&uuid, email);
+    async fn new(stats: SharedStats, uuid: Arc<str>, email: Option<Arc<str>>) -> Self {
+        {
+            let mut stats_guard = stats.write().await;
+            stats_guard.increment_connections();
+            let email_ref = email.as_ref().map(|e| e.as_ref());
+            stats_guard.increment_user_connection(&uuid, email_ref);
+        }
         Self {
             stats,
             uuid,
+            _email: email,
             released: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -58,8 +67,9 @@ impl Drop for ConnectionGuard {
             let stats = self.stats.clone();
             let uuid = self.uuid.clone();
             tokio::spawn(async move {
-                stats.lock().await.decrement_connections();
-                stats.lock().await.decrement_user_connection(&uuid);
+                let mut stats_guard = stats.write().await;
+                stats_guard.decrement_connections();
+                stats_guard.decrement_user_connection(&uuid);
             });
         }
     }
@@ -70,7 +80,7 @@ impl Drop for ConnectionGuard {
 pub struct ServerConfig {
     pub bind_addr: SocketAddr,
     pub users: HashSet<Uuid>,
-    pub user_emails: HashMap<Uuid, Option<String>>,
+    pub user_emails: HashMap<Uuid, Option<Arc<str>>>,
 }
 
 impl ServerConfig {
@@ -84,10 +94,14 @@ impl ServerConfig {
 
     pub fn add_user_with_email(&mut self, uuid: Uuid, email: Option<String>) {
         self.users.insert(uuid);
-        self.user_emails.insert(uuid, email);
+        let email_arc = email.map(|e| Arc::from(e.as_str()));
+        self.user_emails.insert(uuid, email_arc);
     }
 
-    pub fn get_user_email(&self, uuid: &Uuid) -> Option<String> {
+    // Removed unused get_user_email method
+
+    /// 获取用户邮箱（返回 Arc<str>，推荐使用）
+    pub fn get_user_email_arc(&self, uuid: &Uuid) -> Option<Arc<str>> {
         self.user_emails.get(uuid).and_then(|e| e.clone())
     }
 }
@@ -99,6 +113,7 @@ pub struct VlessServer {
     ws_manager: SharedWsManager,
     monitoring_config: MonitoringConfig,
     performance_config: PerformanceConfig,
+    buffer_pool: BufferPool,
 }
 
 impl VlessServer {
@@ -109,12 +124,18 @@ impl VlessServer {
         monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
     ) -> Self {
+        let buffer_pool = BufferPool::new(
+            performance_config.buffer_size,
+            performance_config.buffer_pool_size,
+        );
+
         Self {
             config: Arc::new(config),
             stats,
             ws_manager,
             monitoring_config,
             performance_config,
+            buffer_pool,
         }
     }
 
@@ -131,6 +152,7 @@ impl VlessServer {
                     let ws_manager = Arc::clone(&self.ws_manager);
                     let monitoring_config = self.monitoring_config.clone();
                     let performance_config = self.performance_config.clone();
+                    let buffer_pool = self.buffer_pool.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
                             stream,
@@ -140,6 +162,7 @@ impl VlessServer {
                             ws_manager,
                             monitoring_config,
                             performance_config,
+                            buffer_pool,
                         ).await {
                             error!("Error handling connection from {}: {}", addr, e);
                         }
@@ -161,6 +184,7 @@ impl VlessServer {
         ws_manager: SharedWsManager,
         monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
+        buffer_pool: BufferPool,
     ) -> Result<()> {
         debug!("New connection from {}", client_addr);
 
@@ -222,24 +246,27 @@ impl VlessServer {
 
         info!("Authenticated user {} from {}", request.uuid, client_addr);
 
-        let uuid_str = request.uuid.to_string();
-        let user_email = config.get_user_email(&request.uuid);
+        let uuid_str: Arc<str> = Arc::from(request.uuid.to_string());
+        let user_email = config.get_user_email_arc(&request.uuid);
 
         // 检查VLESS连接数限制
         let current_connections = {
-            let stats_guard = stats.lock().await;
+            let stats_guard = stats.read().await;
             stats_guard.get_active_connections()
         };
 
         if current_connections >= monitoring_config.vless_max_connections {
             warn!("VLESS connection limit reached: {}/{} from {}",
                   current_connections, monitoring_config.vless_max_connections, client_addr);
-            stats.lock().await.increment_rejected_connections();
+            {
+                let stats_guard = stats.write().await;
+                stats_guard.increment_rejected_connections();
+            }
             return Err(anyhow!("Server connection limit reached"));
         }
 
         // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email).await;
+        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email.clone()).await;
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
@@ -248,12 +275,12 @@ impl VlessServer {
         // 根据命令类型处理连接
         let result = match request.command {
             Command::Tcp => {
-                let user_email = config.get_user_email(&request.uuid);
-                Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email).await
+                let user_email = config.get_user_email_arc(&request.uuid);
+                Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email, buffer_pool.clone()).await
             }
             Command::Udp => {
-                let user_email = config.get_user_email(&request.uuid);
-                Self::handle_udp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email).await
+                let user_email = config.get_user_email_arc(&request.uuid);
+                Self::handle_udp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email, buffer_pool).await
             }
             Command::Mux => {
                 warn!("Mux command not implemented yet");
@@ -271,9 +298,10 @@ impl VlessServer {
         initial_data: Bytes,
         stats: SharedStats,
         perf_config: PerformanceConfig,
-        user_email: Option<String>,
+        user_email: Option<Arc<str>>,
+        buffer_pool: BufferPool,
     ) -> Result<()> {
-        let uuid_str = request.uuid.to_string();
+        let uuid_str = Arc::from(request.uuid.to_string());
         let email_opt = user_email;
 
         // 连接到目标服务器
@@ -304,8 +332,12 @@ impl VlessServer {
         let initial_len = initial_data.len();
         if initial_len > 0 {
             target_stream.write_all(&initial_data).await?;
-            stats.lock().await.add_upload_bytes(initial_len as u64);
-            stats.lock().await.add_user_upload_bytes(&uuid_str, initial_len as u64, email_opt.clone());
+            {
+                let mut stats_guard = stats.write().await;
+                stats_guard.add_upload_bytes(initial_len as u64);
+                let email_ref = email_opt.as_ref().map(|e| e.as_ref());
+                stats_guard.add_user_upload_bytes(&uuid_str, initial_len as u64, email_ref);
+            }
         }
 
         info!("Established proxy connection: {} -> {}",
@@ -322,15 +354,17 @@ impl VlessServer {
         let email_c2t = email_opt.clone();
         let email_t2c = email_opt;
         let batch_size = perf_config.stats_batch_size as u64;
+        let buffer_pool_c2t = buffer_pool.clone();
+        let buffer_pool_t2c = buffer_pool;
 
         // 客户端→目标（上传）任务 - 使用批量统计
         let upload_task = tokio::spawn(async move {
-            let mut buffer = vec![0u8; perf_config.buffer_size];
+            let mut buffer = buffer_pool_c2t.acquire();  // 从池中租借缓冲区
             let mut total = 0u64;
             let mut batch_total = 0u64;
 
             loop {
-                match client_read.read(&mut buffer).await {
+                match client_read.read(&mut buffer[..]).await {
                     Ok(0) => break,
                     Ok(n) => {
                         total += n as u64;
@@ -342,8 +376,10 @@ impl VlessServer {
 
                         // 批量更新统计，减少锁竞争
                         if batch_total >= batch_size {
-                            stats_c2t.lock().await.add_upload_bytes(batch_total);
-                            stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t.clone());
+                            let mut stats_guard = stats_c2t.write().await;
+                            stats_guard.add_upload_bytes(batch_total);
+                            let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
+                            stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
                             batch_total = 0;
                         }
                     }
@@ -353,8 +389,10 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_c2t.lock().await.add_upload_bytes(batch_total);
-                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t);
+                let mut stats_guard = stats_c2t.write().await;
+                stats_guard.add_upload_bytes(batch_total);
+                let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
+                stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
             }
 
             total
@@ -362,12 +400,12 @@ impl VlessServer {
 
         // 目标→客户端（下载）任务 - 使用批量统计
         let download_task = tokio::spawn(async move {
-            let mut buffer = vec![0u8; perf_config.buffer_size];
+            let mut buffer = buffer_pool_t2c.acquire();  // 从池中租借缓冲区
             let mut total = 0u64;
             let mut batch_total = 0u64;
 
             loop {
-                match target_read.read(&mut buffer).await {
+                match target_read.read(&mut buffer[..]).await {
                     Ok(0) => break,
                     Ok(n) => {
                         total += n as u64;
@@ -379,8 +417,10 @@ impl VlessServer {
 
                         // 批量更新统计，减少锁竞争
                         if batch_total >= batch_size {
-                            stats_t2c.lock().await.add_download_bytes(batch_total);
-                            stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c.clone());
+                            let mut stats_guard = stats_t2c.write().await;
+                            stats_guard.add_download_bytes(batch_total);
+                            let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
+                            stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
                             batch_total = 0;
                         }
                     }
@@ -390,8 +430,10 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_t2c.lock().await.add_download_bytes(batch_total);
-                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c);
+                let mut stats_guard = stats_t2c.write().await;
+                stats_guard.add_download_bytes(batch_total);
+                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
+                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
             }
 
             total
@@ -411,9 +453,10 @@ impl VlessServer {
         _initial_data: Bytes,
         stats: SharedStats,
         perf_config: PerformanceConfig,
-        user_email: Option<String>,
+        user_email: Option<Arc<str>>,
+        buffer_pool: BufferPool,
     ) -> Result<()> {
-        let uuid_str = request.uuid.to_string();
+        let uuid_str: Arc<str> = Arc::from(request.uuid.to_string());
 
         // 解析目标地址
         let target_addr = match &request.address {
@@ -437,7 +480,10 @@ impl VlessServer {
 
         let batch_size = perf_config.stats_batch_size as u64;
         let udp_timeout = perf_config.udp_timeout;
-        let udp_recv_buffer = perf_config.udp_recv_buffer;
+        let _udp_recv_buffer = perf_config.udp_recv_buffer;  // 保留用于未来功能
+
+        // 注意：UDP 缓冲区大小由系统自动调优
+        // 如需手动调整，可通过系统参数配置
 
         // 分离TCP流
         let (mut client_read, mut client_write) = client_stream.into_split();
@@ -447,9 +493,10 @@ impl VlessServer {
         let stats_c2t = stats.clone();
         let uuid_c2t = uuid_str.clone();
         let email_c2t = user_email.clone();
+        let buffer_pool_c2t = buffer_pool.clone();
 
         let client_to_target = tokio::spawn(async move {
-            let mut buffer = vec![0u8; udp_recv_buffer];
+            let mut buffer = buffer_pool_c2t.acquire();  // 从池中租借缓冲区
             let mut total = 0u64;
             let mut batch_total = 0u64;
 
@@ -475,8 +522,10 @@ impl VlessServer {
 
                         // 批量更新统计
                         if batch_total >= batch_size {
-                            stats_c2t.lock().await.add_upload_bytes(batch_total);
-                            stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t.clone());
+                            let mut stats_guard = stats_c2t.write().await;
+                            stats_guard.add_upload_bytes(batch_total);
+                            let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
+                            stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
                             batch_total = 0;
                         }
                     }
@@ -493,8 +542,10 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_c2t.lock().await.add_upload_bytes(batch_total);
-                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t);
+                let mut stats_guard = stats_c2t.write().await;
+                stats_guard.add_upload_bytes(batch_total);
+                let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
+                stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
             }
 
             total
@@ -505,9 +556,10 @@ impl VlessServer {
         let stats_t2c = stats.clone();
         let uuid_t2c = uuid_str.clone();
         let email_t2c = user_email;
+        let buffer_pool_t2c = buffer_pool;
 
         let target_to_client = tokio::spawn(async move {
-            let mut buffer = vec![0u8; udp_recv_buffer];
+            let mut buffer = buffer_pool_t2c.acquire();  // 从池中租借缓冲区
             let mut total = 0u64;
             let mut batch_total = 0u64;
 
@@ -525,8 +577,10 @@ impl VlessServer {
 
                             // 批量更新统计
                             if batch_total >= batch_size {
-                                stats_t2c.lock().await.add_download_bytes(batch_total);
-                                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c.clone());
+                                let mut stats_guard = stats_t2c.write().await;
+                                stats_guard.add_download_bytes(batch_total);
+                                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
+                                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
                                 batch_total = 0;
                             }
                         }
@@ -540,8 +594,10 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_t2c.lock().await.add_download_bytes(batch_total);
-                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c);
+                let mut stats_guard = stats_t2c.write().await;
+                stats_guard.add_download_bytes(batch_total);
+                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
+                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
             }
 
             total
