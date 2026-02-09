@@ -161,12 +161,9 @@ impl ConfigWizard {
                     Ok(uuid) => break uuid.to_string(),
                     Err(_) => {
                         println!("  ⚠ 无效的 UUID 格式，示例: 550e8400-e29b-41d4-a716-446655440000");
-                        continue;
                     }
                 }
-            } else {
                 println!("  ⚠ 无效选择，请输入 A 或 M");
-                continue;
             }
         };
 

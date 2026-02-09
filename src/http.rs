@@ -84,19 +84,22 @@ pub async fn handle_http_request(
             serve_embedded_file("vite.svg", "image/svg+xml")
         }
         "/api/stats" => {
-            let mut stats_guard = stats.lock().await;
-            let monitor_data = stats_guard.get_monitor_data();
-            let json = serde_json::to_string(&monitor_data)?;
+            let stats_guard = stats.read().await;
+            let monitor_data_raw = stats_guard.get_monitor_data_raw();
+            drop(stats_guard);  // 立即释放锁
+
+            let monitor_data = monitor_data_raw.format();  // 锁外格式化
+            let json = serde_json::to_string(&monitor_data)?;  // 锁外序列化
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
         }
         "/api/user-stats" => {
-            let stats_guard = stats.lock().await;
+            let stats_guard = stats.read().await;
             let user_stats = stats_guard.get_all_user_stats();
             let json = serde_json::to_string(&user_stats)?;
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
         }
         "/api/speed-history" => {
-            let stats_guard = stats.lock().await;
+            let stats_guard = stats.read().await;
             let history = stats_guard.get_speed_history_response();
             let json = serde_json::to_string(&history)?;
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
