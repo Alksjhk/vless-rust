@@ -22,6 +22,8 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 
 // 使用 mimalloc 作为全局内存分配器，提升内存分配性能
+// musl 目标不使用 mimalloc，因为与静态链接存在兼容性问题（__memcpy_chk、__memset_chk）
+#[cfg(not(target_env = "musl"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
