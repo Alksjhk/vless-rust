@@ -257,17 +257,6 @@ impl Stats {
         }
     }
 
-    /// 尝试增加连接数（原子操作，避免竞争条件）
-    /// 返回 true 表示成功，false 表示已达到最大连接数
-    pub fn try_increment_connections(&mut self, max_connections: usize) -> bool {
-        if self.active_connections >= max_connections {
-            false
-        } else {
-            self.active_connections += 1;
-            true
-        }
-    }
-
     #[allow(dead_code)]
     pub fn increment_connections(&mut self) {
         self.active_connections += 1;
@@ -345,8 +334,8 @@ impl Stats {
                 (0.0, 0.0)
             } else {
                 // 计算速度
-                let upload_diff = self.total_upload_bytes.saturating_sub(last_upload.upload_bytes);
-                let download_diff = self.total_download_bytes.saturating_sub(last_download.download_bytes);
+                let upload_diff = self.total_upload_bytes.saturating_sub(last_snapshot.upload_bytes);
+                let download_diff = self.total_download_bytes.saturating_sub(last_snapshot.download_bytes);
 
                 let upload_speed = (upload_diff as f64) / duration_secs;
                 let download_speed = (download_diff as f64) / duration_secs;
@@ -605,15 +594,6 @@ impl Stats {
         Ok(())
     }
 
-    /// 获取持久化所需的数据（避免长时间持锁）
-    pub fn get_persistence_data(&self) -> (u64, u64, std::collections::HashMap<String, (u64, u64, Option<String>)>) {
-        let users_data: std::collections::HashMap<String, (u64, u64, Option<String>)> = self.user_stats.iter().map(|(uuid, stats)| {
-            (uuid.clone(), (stats.total_upload_bytes, stats.total_download_bytes, stats.email.clone()))
-        }).collect();
-
-        (self.total_upload_bytes, self.total_download_bytes, users_data)
-    }
-
     #[allow(dead_code)]
     pub fn save_to_config(&self) -> anyhow::Result<()> {
         let mut config = if let Ok(content) = std::fs::read_to_string(&self.config_path) {
@@ -684,7 +664,7 @@ fn format_duration(duration: Duration) -> String {
 
 pub type SharedStats = Arc<RwLock<Stats>>;
 
-pub async fn start_stats_persistence(stats: SharedStats, config_path: String) {
+pub async fn start_stats_persistence(stats: SharedStats, _config_path: String) {
     let mut interval = tokio::time::interval(Duration::from_secs(600));
 
 
@@ -695,41 +675,4 @@ pub async fn start_stats_persistence(stats: SharedStats, config_path: String) {
             eprintln!("Failed to save stats to config: {}", e);
         }
     }
-}
-
-/// 在无锁状态下保存统计数据到配置文件
-fn save_stats_to_config(
-    config_path: &str,
-    total_upload: u64,
-    total_download: u64,
-    users_data: &std::collections::HashMap<String, (u64, u64, Option<String>)>,
-) -> anyhow::Result<()> {
-    let mut config = if let Ok(content) = std::fs::read_to_string(config_path) {
-        serde_json::from_str::<serde_json::Value>(&content)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let users_json: serde_json::Map<String, serde_json::Value> = users_data.iter().map(|(uuid, (upload, download, email))| {
-        (
-            uuid.clone(),
-            serde_json::json!({
-                "total_upload_bytes": upload,
-                "total_download_bytes": download,
-                "email": email,
-            })
-        )
-    }).collect();
-
-    let monitor = serde_json::json!({
-        "total_upload_bytes": total_upload,
-        "total_download_bytes": total_download,
-        "last_update": crate::time::utc_now_rfc3339(),
-        "users": serde_json::Value::from(users_json)
-    });
-
-    config["monitor"] = monitor;
-
-    std::fs::write(config_path, serde_json::to_string_pretty(&config)?)?;
-    Ok(())
 }
