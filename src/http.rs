@@ -90,7 +90,9 @@ pub async fn handle_http_request(
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
         }
         "/api/user-stats" => {
-            let stats_guard = stats.lock().await;
+            // 先触发速度计算，确保用户速度是最新的
+            let mut stats_guard = stats.lock().await;
+            stats_guard.get_monitor_data();  // 这会调用 calculate_speeds() 并更新所有用户速度
             let user_stats = stats_guard.get_all_user_stats();
             let json = serde_json::to_string(&user_stats)?;
             Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))

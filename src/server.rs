@@ -38,16 +38,17 @@ struct ConnectionGuard {
     stats: SharedStats,
     uuid: String,
     released: Arc<AtomicBool>,
+    should_increment_on_drop: bool,  // 是否在 drop 时减少连接数（如果构造时已增加则为 false）
 }
 
 impl ConnectionGuard {
-    async fn new(stats: SharedStats, uuid: String, email: Option<String>) -> Self {
-        stats.lock().await.increment_connections();
-        stats.lock().await.increment_user_connection(&uuid, email);
+    /// 创建一个已预增加连接数的 guard（构造时已在外部增加）
+    fn new_pre_incremented(stats: SharedStats, uuid: String) -> Self {
         Self {
             stats,
             uuid,
             released: Arc::new(AtomicBool::new(false)),
+            should_increment_on_drop: false,  // 构造时已增加，drop 时不需要再增加
         }
     }
 }
@@ -57,8 +58,11 @@ impl Drop for ConnectionGuard {
         if !self.released.load(Ordering::SeqCst) {
             let stats = self.stats.clone();
             let uuid = self.uuid.clone();
+            let should_decrement = self.should_increment_on_drop;
             tokio::spawn(async move {
-                stats.lock().await.decrement_connections();
+                if should_decrement {
+                    stats.lock().await.decrement_connections();
+                }
                 stats.lock().await.decrement_user_connection(&uuid);
             });
         }
@@ -225,21 +229,28 @@ impl VlessServer {
         let uuid_str = request.uuid.to_string();
         let user_email = config.get_user_email(&request.uuid);
 
-        // 检查VLESS连接数限制
-        let current_connections = {
-            let stats_guard = stats.lock().await;
-            stats_guard.get_active_connections()
+        // 原子操作：检查并增加连接数（避免竞争条件）
+        let can_accept = {
+            let mut stats_guard = stats.lock().await;
+            stats_guard.try_increment_connections(monitoring_config.vless_max_connections)
         };
 
-        if current_connections >= monitoring_config.vless_max_connections {
+        if !can_accept {
+            let current_connections = {
+                let stats_guard = stats.lock().await;
+                stats_guard.get_active_connections()
+            };
             warn!("VLESS connection limit reached: {}/{} from {}",
                   current_connections, monitoring_config.vless_max_connections, client_addr);
             stats.lock().await.increment_rejected_connections();
             return Err(anyhow!("Server connection limit reached"));
         }
 
-        // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email).await;
+        // RAII guard for connection counting（连接数已在 try_increment_connections 中增加）
+        let _guard = ConnectionGuard::new_pre_incremented(stats.clone(), uuid_str.clone());
+
+        // 增加用户连接数
+        stats.lock().await.increment_user_connection(&uuid_str, user_email.clone());
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
@@ -304,8 +315,7 @@ impl VlessServer {
         let initial_len = initial_data.len();
         if initial_len > 0 {
             target_stream.write_all(&initial_data).await?;
-            stats.lock().await.add_upload_bytes(initial_len as u64);
-            stats.lock().await.add_user_upload_bytes(&uuid_str, initial_len as u64, email_opt.clone());
+            stats.lock().await.add_upload_traffic(initial_len as u64, &uuid_str, email_opt.clone());
         }
 
         info!("Established proxy connection: {} -> {}",
@@ -340,10 +350,9 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计，减少锁竞争
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
-                            stats_c2t.lock().await.add_upload_bytes(batch_total);
-                            stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t.clone());
+                            stats_c2t.lock().await.add_upload_traffic(batch_total, &uuid_c2t, email_c2t.clone());
                             batch_total = 0;
                         }
                     }
@@ -353,8 +362,7 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_c2t.lock().await.add_upload_bytes(batch_total);
-                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t);
+                stats_c2t.lock().await.add_upload_traffic(batch_total, &uuid_c2t, email_c2t);
             }
 
             total
@@ -377,10 +385,9 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计，减少锁竞争
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
-                            stats_t2c.lock().await.add_download_bytes(batch_total);
-                            stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c.clone());
+                            stats_t2c.lock().await.add_download_traffic(batch_total, &uuid_t2c, email_t2c.clone());
                             batch_total = 0;
                         }
                     }
@@ -390,8 +397,7 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_t2c.lock().await.add_download_bytes(batch_total);
-                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c);
+                stats_t2c.lock().await.add_download_traffic(batch_total, &uuid_t2c, email_t2c);
             }
 
             total
@@ -473,10 +479,9 @@ impl VlessServer {
                             break;
                         }
 
-                        // 批量更新统计
+                        // 批量更新统计，使用单次锁定
                         if batch_total >= batch_size {
-                            stats_c2t.lock().await.add_upload_bytes(batch_total);
-                            stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t.clone());
+                            stats_c2t.lock().await.add_upload_traffic(batch_total, &uuid_c2t, email_c2t.clone());
                             batch_total = 0;
                         }
                     }
@@ -493,8 +498,7 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_c2t.lock().await.add_upload_bytes(batch_total);
-                stats_c2t.lock().await.add_user_upload_bytes(&uuid_c2t, batch_total, email_c2t);
+                stats_c2t.lock().await.add_upload_traffic(batch_total, &uuid_c2t, email_c2t);
             }
 
             total
@@ -523,10 +527,9 @@ impl VlessServer {
                                 break;
                             }
 
-                            // 批量更新统计
+                            // 批量更新统计，使用单次锁定
                             if batch_total >= batch_size {
-                                stats_t2c.lock().await.add_download_bytes(batch_total);
-                                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c.clone());
+                                stats_t2c.lock().await.add_download_traffic(batch_total, &uuid_t2c, email_t2c.clone());
                                 batch_total = 0;
                             }
                         }
@@ -540,8 +543,7 @@ impl VlessServer {
 
             // 处理剩余的批量统计
             if batch_total > 0 {
-                stats_t2c.lock().await.add_download_bytes(batch_total);
-                stats_t2c.lock().await.add_user_download_bytes(&uuid_t2c, batch_total, email_t2c);
+                stats_t2c.lock().await.add_download_traffic(batch_total, &uuid_t2c, email_t2c);
             }
 
             total
