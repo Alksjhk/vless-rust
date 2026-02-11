@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-这是一个基于 Rust 和 Tokio 实现的高性能 VLESS 协议服务器，包含完整的 HTTP 监控页面前端。项目遵循 xray-core 的 VLESS 协议规范，支持版本 0（测试版）和版本 1（正式版）。
+这是一个基于 Rust 和 Tokio 实现的高性能 VLESS 协议服务器。项目遵循 xray-core 的 VLESS 协议规范，支持版本 0（测试版）和版本 1（正式版）。
 
 ## 常用命令
 
-### 后端开发
+### 编译和运行
 ```bash
 # 编译项目
 cargo build
@@ -26,78 +26,32 @@ cargo run -- /path/to/config.json
 cargo check
 ```
 
-### 前端开发
-```bash
-# 进入前端目录
-cd frontend
-
-# 安装依赖
-npm install
-
-# 开发模式（支持热重载，代理 /api 到后端）
-npm run dev
-
-# 构建生产版本（输出到 ../static/）
-npm run build
-
-# 预览构建结果
-npm run preview
-```
-
 ## 架构设计
 
 ### 模块职责
 
 **后端核心模块：**
 
-- `src/main.rs`: 程序入口，负责配置加载、统计模块初始化和服务器启动
+- `src/main.rs`: 程序入口，负责配置加载和服务器启动
 - `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
 - `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发
-- `src/stats.rs`: 流量统计模块，使用快照机制计算速度，支持持久化到配置文件
-- `src/http.rs`: HTTP 请求检测、静态文件服务和监控 API 端点
-- `src/ws.rs`: WebSocket 实时数据推送管理
-- `src/memory.rs`: 跨平台内存信息获取（支持 Linux/Windows，替代 sysinfo）
-- `src/time.rs`: 时间工具模块，提供 RFC3339 格式化（支持负时间戳，替代 chrono）
-- `src/utils.rs`: 工具函数，包括 IP 检测和 VLESS URL 生成
-- `src/base64.rs`: Base64 编码实现（RFC 4648，无 unsafe 代码）
-- `src/wizard.rs`: 配置向导，包含改进的邮箱验证逻辑
-
-**前端架构：**
-
-- React 18 (Hooks)
-- Vite 构建工具（快速开发和优化）
-- Zustand 状态管理（轻量级全局状态）
-- Recharts 图表库（流量波形图）
-- Tailwind CSS（玻璃态 UI 样式）
-- WebSocket 智能降级（优先 WS，失败降级轮询）
+- `src/http.rs`: HTTP 请求检测（用于区分 HTTP 和 VLESS 请求）
+- `src/utils.rs`: 工具函数，VLESS URL 生成
+- `src/wizard.rs`: 配置向导，交互式生成配置文件
+- `src/buffer_pool.rs`: 缓冲区池，复用缓冲区减少内存分配
 
 ### 关键设计模式
 
-**混合协议处理：**
-- 服务器在单个 TCP 端口同时监听 VLESS 和 HTTP 请求
+**协议请求检测：**
 - 通过 `is_http_request()` 检测数据包前缀判断请求类型
-- HTTP 请求由 `http.rs` 处理，VLESS 请求由 `server.rs` 处理
-
-**流量统计快照机制：**
-- 使用 `SpeedSnapshot` 记录流量和时间戳
-- `calculate_speeds()` 对比当前快照和上次快照计算精确速度
-- 保留 120 秒历史快照用于趋势图表
-- 每 10 分钟自动持久化总流量到配置文件
+- 拒绝 HTTP 请求，只处理 VLESS 协议请求
 
 **异步代理转发：**
-- 使用 `tokio::select!` 同时监听双向数据流
+- 使用 `tokio::spawn` 同时处理双向数据流
 - 任一方向关闭时，整个代理连接终止
-- 流量统计集成在数据传输路径中
-- **批量统计**：累积到64KB才更新统计，减少锁竞争
 - **可配置缓冲区**：默认128KB，适配高带宽场景
-
-**外网 IP 自动检测：**
-- 服务器启动时并发请求多个 API 获取外网 IP
-- 支持 5 个备用 API，任一成功即返回
-- 单 API 5 秒超时，整体 10 秒超时
-- 检测失败时使用占位符，不影响服务器启动
-- 自动为所有用户生成 VLESS:// 协议链接并打印到日志
+- **缓冲区池**：复用缓冲区，减少内存分配开销
 
 ### 配置文件结构
 
@@ -113,31 +67,19 @@ npm run preview
       "email": "user@example.com"
     }
   ],
-  "monitor": {
-    "total_upload_bytes": 0,
-    "total_download_bytes": 0,
-    "last_update": "2024-01-01T00:00:00Z"
-  },
-  "monitoring": {
-    "speed_history_duration": 120,
-    "broadcast_interval": 1,
-    "websocket_max_connections": 300,
-    "websocket_heartbeat_timeout": 60,
-    "vless_max_connections": 300
-  },
   "performance": {
     "buffer_size": 131072,
     "tcp_nodelay": true,
     "tcp_recv_buffer": 262144,
     "tcp_send_buffer": 262144,
-    "stats_batch_size": 65536,
     "udp_timeout": 30,
-    "udp_recv_buffer": 65536
+    "udp_recv_buffer": 65536,
+    "buffer_pool_size": 32
   }
 }
 ```
 
-配置文件在服务器启动时加载，不存在时自动创建默认配置。monitor 字段由后端自动维护，手动修改可能被覆盖。performance 字段控制性能优化参数（默认128KB缓冲区、批量统计、TCP_NODELAY、UDP超时）。
+配置文件在服务器启动时加载，不存在时自动启动配置向导。
 
 ## 文件与功能映射关系
 
@@ -145,40 +87,21 @@ npm run preview
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、初始化统计、启动服务器、IP检测 |
+| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
-| `src/stats.rs` | 流量统计、速度计算 | `Stats`、`SpeedSnapshot`、`get_monitor_data()` |
-| `src/http.rs` | HTTP 服务、API 端点 | `handle_http_request()`、`serve_static_file()` |
-| `src/ws.rs` | WebSocket 实时推送 | `WebSocketManager`、`broadcast()` |
-| `src/utils.rs` | 工具函数、IP检测、URL生成 | `get_public_ip()`、`generate_vless_url()` |
-
-### 前端核心文件
-
-| 文件路径 | 核心功能 | 组件/函数 |
-|---------|---------|----------|
-| `frontend/src/App.jsx` | 主应用容器、布局 | `<App>` - 仪表板布局 |
-| `frontend/src/main.jsx` | 应用入口、React 挂载 | `ReactDOM.createRoot()` - 初始化 React 应用 |
-| `frontend/src/store/monitorStore.js` | Zustand 全局状态 | `useMonitorStore()` - 监控数据状态管理 |
-| `frontend/src/api/websocket.js` | WebSocket 连接管理 | `WebSocketClient` - 实时数据连接（智能降级） |
-| `frontend/src/api/rest.js` | REST API 封装 | `fetchStats()` - API 请求函数 |
-| `frontend/src/components/MetricCard.jsx` | 指标卡片基础组件 | `<MetricCard>` - 通用数据展示 |
-| `frontend/src/components/SpeedCard.jsx` | 实时速度显示 | `<SpeedCard>` - 上传/下载速度 |
-| `frontend/src/components/TrafficCard.jsx` | 总流量显示 | `<TrafficCard>` - 总流量统计 |
-| `frontend/src/components/UptimeCard.jsx` | 运行时间显示 | `<UptimeCard>` - 服务器运行时长 |
-| `frontend/src/components/ResourceCard.jsx` | 资源使用显示 | `<ResourceCard>` - 内存和连接数 |
-| `frontend/src/components/TrafficChart.jsx` | 流量趋势图表 | `<TrafficChart>` - Recharts 速度历史曲线 |
-| `frontend/src/components/SystemInfo.jsx` | 系统信息面板 | `<SystemInfo>` - 服务器状态总览 |
-| `frontend/src/components/UserTable.jsx` | 用户流量统计 | `<UserTable>` - 用户级别流量表格 |
+| `src/http.rs` | HTTP 请求检测 | `is_http_request()` |
+| `src/utils.rs` | 工具函数、URL生成 | `generate_vless_url()` |
+| `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
+| `src/buffer_pool.rs` | 缓冲区池 | `BufferPool` |
 
 ### 配置文件
 
 | 文件路径 | 核心功能 | 说明 |
 |---------|---------|------|
 | `Cargo.toml` | Rust 项目配置 | 依赖项、编译优化、二进制配置 |
-| `.cargo/config.toml` | Cargo 编译配置 | Windows 静态链接选项、Linux musl 静态链接 |
-| `config.json` | 运行时配置 | 服务器、用户、监控、性能参数（自动生成） |
+| `config.json` | 运行时配置 | 服务器、用户、性能参数（自动生成） |
 
 ### 文档文件
 
@@ -186,12 +109,6 @@ npm run preview
 |---------|---------|------|
 | `CLAUDE.md` | AI 助手规则 | 项目架构、开发指南、文件映射 |
 | `README.md` | 项目说明 | 安装、使用、部署指南 |
-| `plan.md` | 开发计划 | 功能规划、任务追踪、完成状态 |
-| `docs/technology.md` | 技术文档 | 架构设计、实现逻辑、流程说明 |
-| `docs/api.md` | API 文档 | 接口定义、请求/响应格式 |
-| `docs/2026-02-02-监控和性能优化.md` | 更新日志 | 监控优化、性能提升记录 |
-| `docs/2026-02-05-外网IP自动获取和VLESS链接生成.md` | 更新日志 | 外网 IP 检测和链接生成 |
-| `docs/2026-02-06-移除Docker支持.md` | 更新日志 | 移除 Docker 支持记录 |
 | `AGENTS.md` | AI 角色定义 | 项目助手行为规范 |
 
 ### 功能快速查找
@@ -204,89 +121,32 @@ npm run preview
 - **用户认证逻辑** → `src/server.rs:handle_connection()`
 - **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
 - **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
-- **流量统计逻辑** → `src/stats.rs:Stats`
-- **速度计算机制** → `src/stats.rs:calculate_speeds()`
-- **内存信息获取** → `src/memory.rs:get_process_memory()`、`get_total_memory()`
-- **时间格式化** → `src/time.rs:UtcTime::to_rfc3339()`
-- **HTTP 路由处理** → `src/http.rs:handle_http_request()`
-- **WebSocket 推送** → `src/ws.rs:WebSocketManager::broadcast()`
-- **监控 API 端点** → `src/http.rs` - 路由匹配部分
-- **前端实时数据** → `frontend/src/store/monitorStore.js`
-- **前端统计卡片** → `frontend/src/components/*.jsx`
+- **HTTP 请求检测** → `src/http.rs:is_http_request()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
 ## 开发指南
 
-### 添加新的监控指标
-
-1. **后端（src/stats.rs）：**
-   - 在 `Stats` 结构体添加字段
-   - 在 `get_monitor_data()` 中返回新指标
-   - 在 `MonitorData` 结构体定义 JSON 字段
-
-2. **前端（frontend/src/）：**
-   - 在 `components/` 创建新的 React 组件
-   - 在 `App.jsx` 中引入并使用组件
-
-### 添加新的 API 端点
-
-在 `src/http.rs` 的 `handle_http_request()` 函数添加新的路由匹配：
-
-```rust
-"/api/your-endpoint" => {
-    // 处理逻辑
-    let data = ...;
-    let json = serde_json::to_string(&data)?;
-    Ok(create_http_response_bytes(200, "application/json", json.as_bytes()))
-}
-```
-
-### API 端点列表
-
-- `GET /api/stats`：获取监控数据（包含用户统计数组）
-- `GET /api/user-stats`：获取所有用户流量统计
-- `GET /api/speed-history`：获取速度历史数据
-- `GET /api/config`：获取监控配置
-- `GET /api/performance`：获取性能配置
-- `GET /api/ws` 或 `GET /ws`：WebSocket 实时推送连接
-
 ### 扩展 VLESS 协议
 
 - **新命令类型**：在 `src/protocol.rs` 中添加 `Command` 枚举值
-- **新地址类型**：在 `AddressType` 和 `Address` 枚举中添加变体
+- **新地址类型**：在 `Address` 枚举中添加变体
 - **命令处理**：在 `src/server.rs` 的 `handle_connection()` 中添加匹配分支
-
-## 前端开发注意事项
-
-- 前端构建输出到 `../static/` 目录，编译时嵌入到可执行文件
-- 开发模式下 Vite 代理 `/api` 请求到 `http://localhost:8443`
-- 静态资源路径使用相对路径，支持部署在子路径
-- 使用 Zustand 管理全局状态，WebSocket 智能降级到 REST API 轮询
-- **部署说明**：编译后的可执行文件已包含所有静态资源，无需 static 目录即可运行
-- **开发命令**：
-  - `npm install` - 安装依赖
-  - `npm run dev` - 开发模式（端口 3000）
-  - `npm run build` - 构建到 `static/` 目录
 
 ## 编译优化
 
 Release 版本启用了以下优化（见 Cargo.toml）：
-- `lto = true`: 链接时优化
-- `codegen-units = 1`: 单代码生成单元
-- `opt-level = "s"`: 优化体积
+- `lto = "fat"`: 链接时优化
+- `codegen-units = 16`: 代码生成单元数量
+- `opt-level = 3`: 优化级别
 - `panic = "abort"`: 减小二进制大小
-- 静态资源嵌入：使用 `rust-embed` 打包所有前端资源，单文件部署
-
-**可执行文件大小**：约 974KB（包含所有前端资源）
 
 ## 性能优化说明
 
-- **可配置缓冲区**：默认128KB传输缓冲区，支持64KB-512KB调整
-- **批量统计**：累积64KB流量才更新统计，减少锁竞争90%+
+- **可配置缓冲区**：默认128KB传输缓冲区
+- **缓冲区池**：复用缓冲区，减少内存分配开销
 - **TCP_NODELAY**：默认启用，降低延迟
-- **大缓冲区**：适配千兆网络，单连接带宽提升4倍
-- 高并发场景（1000+连接）建议调小buffer_size以降低内存占用
+- **大缓冲区**：适配千兆网络
 
 ## UDP 协议支持
 
@@ -296,7 +156,7 @@ VLESS 协议使用 UDP over TCP (UoT) 机制传输 UDP 数据：
 
 - UDP 数据包封装在 TCP 连接中传输
 - 为每个 UDP 会话创建独立的 UDP socket
-- 支持域名解析和批量流量统计
+- 支持域名解析
 - 30秒超时自动清理空闲会话
 
 ### 配置项
@@ -306,35 +166,12 @@ VLESS 协议使用 UDP over TCP (UoT) 机制传输 UDP 数据：
 - `udp_timeout`: UDP 会话超时时间（秒），默认 30
 - `udp_recv_buffer`: UDP 接收缓冲区大小（字节），默认 65536 (64KB)
 
-### 配置示例
-
-```json
-{
-  "performance": {
-    "buffer_size": 131072,
-    "tcp_nodelay": true,
-    "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144,
-    "stats_batch_size": 65536,
-    "udp_timeout": 30,
-    "udp_recv_buffer": 65536
-  }
-}
-```
-
-### 性能特点
-
-- **批量统计**：累积64KB流量才更新统计，减少锁竞争
-- **超时管理**：30秒无活动自动关闭连接
-- **并发处理**：使用 Tokio 异步任务处理多个 UDP 会话
-- **域名支持**：自动解析域名到 IP 地址
-
 ## 安全注意事项
 
 - UUID 是唯一的认证凭据，确保配置文件权限正确
 - 日志中不记录敏感信息
 - 建议生产环境配合 TLS 使用
-- HTTP 监控页面无认证，应配置防火墙限制访问
+- 配置防火墙规则限制访问
 
 ## 参考资料
 

@@ -29,9 +29,8 @@ impl ConfigWizard {
 
         // 创建配置
         let config = Config {
-            server: ServerSettings { listen, port, public_ip: None },
+            server: ServerSettings { listen, port },
             users,
-            monitoring: Default::default(),
             performance: Default::default(),
         };
 
@@ -127,81 +126,84 @@ impl ConfigWizard {
 
     /// 提示配置单个用户
     fn prompt_user(existing_users: &[UserConfig]) -> Result<UserConfig> {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("添加用户 #{}", existing_users.len() + 1);
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+        loop {
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("添加用户 #{}", existing_users.len() + 1);
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        // UUID 配置
-        println!("【用户 UUID】");
-        println!("  UUID 是用户的唯一认证凭据，必须保密。");
-        println!("  • 自动生成 - 系统随机生成安全的 UUID（推荐）");
-        println!("  • 手动输入 - 使用自定义 UUID（8-4-4-4-12 格式）");
+            // UUID 配置
+            println!("【用户 UUID】");
+            println!("  UUID 是用户的唯一认证凭据，必须保密。");
+            println!("  • 自动生成 - 系统随机生成安全的 UUID（推荐）");
+            println!("  • 手动输入 - 使用自定义 UUID（8-4-4-4-12 格式）");
 
-        let uuid = loop {
-            print!("  选择 [A]自动生成 / [M]手动输入 [默认: A]: ");
+            let uuid = loop {
+                print!("  选择 [A]自动生成 / [M]手动输入 [默认: A]: ");
+                io::stdout().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                let input = input.trim().to_lowercase();
+
+                if input.is_empty() || input == "a" || input == "auto" {
+                    let new_uuid = Uuid::new_v4();
+                    println!("  ✓ 已生成 UUID: {}", new_uuid);
+                    break new_uuid.to_string();
+                } else if input == "m" || input == "manual" {
+                    print!("  请输入 UUID: ");
+                    io::stdout().flush()?;
+
+                    let mut uuid_input = String::new();
+                    io::stdin().read_line(&mut uuid_input)?;
+                    let uuid_input = uuid_input.trim();
+
+                    match Uuid::parse_str(uuid_input) {
+                        Ok(uuid) => break uuid.to_string(),
+                        Err(_) => {
+                            println!("  ⚠ 无效的 UUID 格式，示例: 550e8400-e29b-41d4-a716-446655440000");
+                        }
+                    }
+                } else {
+                    println!("  ⚠ 无效选择，请输入 A 或 M");
+                }
+            };
+
+            // 邮箱配置
+            let default_email = format!("user{}@a.com", existing_users.len() + 1);
+            println!("\n【用户邮箱】");
+            println!("  邮箱地址用于标识用户，方便管理。");
+            println!("  可以在客户端显示，帮助识别连接。");
+
+            print!("  请输入邮箱地址 [默认: {}]: ", default_email);
             io::stdout().flush()?;
 
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
-            let input = input.trim().to_lowercase();
+            let input = input.trim();
 
-            if input.is_empty() || input == "a" || input == "auto" {
-                let new_uuid = Uuid::new_v4();
-                println!("  ✓ 已生成 UUID: {}", new_uuid);
-                break new_uuid.to_string();
-            } else if input == "m" || input == "manual" {
-                print!("  请输入 UUID: ");
-                io::stdout().flush()?;
-
-                let mut uuid_input = String::new();
-                io::stdin().read_line(&mut uuid_input)?;
-                let uuid_input = uuid_input.trim();
-
-                match Uuid::parse_str(uuid_input) {
-                    Ok(uuid) => break uuid.to_string(),
-                    Err(_) => {
-                        println!("  ⚠ 无效的 UUID 格式，示例: 550e8400-e29b-41d4-a716-446655440000");
-                    }
+            let email = if input.is_empty() {
+                default_email.clone()
+            } else {
+                // 验证邮箱格式（基本格式检查）
+                if !is_valid_email_format(input) {
+                    println!("  ⚠ 邮箱格式不正确，但仍然接受");
                 }
-                println!("  ⚠ 无效选择，请输入 A 或 M");
+                input.to_string()
+            };
+
+            // 验证 UUID 唯一性
+            if let Some(existing) = existing_users.iter().find(|u| u.uuid == uuid) {
+                println!("  ✗ 错误：UUID 与现有用户重复: {}", existing.email.as_deref().unwrap_or("未命名"));
+                println!("  请重新输入不同的 UUID\n");
+                continue; // 重新开始循环，而不是递归
             }
-        };
 
-        // 邮箱配置
-        let default_email = format!("user{}@a.com", existing_users.len() + 1);
-        println!("\n【用户邮箱】");
-        println!("  邮箱地址用于标识用户，方便管理。");
-        println!("  可以在客户端显示，帮助识别连接。");
+            println!("\n✓ 用户配置完成");
+            println!("  UUID: {}", uuid);
+            println!("  Email: {}", email);
 
-        print!("  请输入邮箱地址 [默认: {}]: ", default_email);
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let input = input.trim();
-
-        let email = if input.is_empty() {
-            default_email.clone()
-        } else {
-            // 验证邮箱格式（基本格式检查）
-            if !is_valid_email_format(input) {
-                println!("  ⚠ 邮箱格式不正确，但仍然接受");
-            }
-            input.to_string()
-        };
-
-        // 验证 UUID 唯一性
-        if let Some(existing) = existing_users.iter().find(|u| u.uuid == uuid) {
-            println!("  ✗ 错误：UUID 与现有用户重复: {}", existing.email.as_deref().unwrap_or("未命名"));
-            println!("  请重新输入不同的 UUID");
-            return Self::prompt_user(existing_users); // 重新提示输入
+            return Ok(UserConfig { uuid, email: Some(email) });
         }
-
-        println!("\n✓ 用户配置完成");
-        println!("  UUID: {}", uuid);
-        println!("  Email: {}", email);
-
-        Ok(UserConfig { uuid, email: Some(email) })
     }
 }
 

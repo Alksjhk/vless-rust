@@ -146,19 +146,6 @@ jobs:
           echo "CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         fi
 
-    # Node.js 用于前端构建
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    # 构建前端
-    - name: Install frontend dependencies and build
-      run: |
-        cd frontend
-        npm ci
-        npm run build
-
     # 编译 Rust 项目
     - name: Build release binary
       shell: bash

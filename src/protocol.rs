@@ -2,6 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use uuid::Uuid;
 use anyhow::{Result, anyhow};
+use tracing::debug;
 
 /// VLESS协议版本
 pub const VLESS_VERSION_BETA: u8 = 0;  // 测试版本
@@ -110,8 +111,10 @@ impl Address {
 pub struct VlessRequest {
     pub version: u8,
     pub uuid: Uuid,
+    /// TODO: 实现附加数据处理
     #[allow(dead_code)]
     pub addons_length: u8,
+    /// TODO: 实现附加数据处理
     #[allow(dead_code)]
     pub addons: Vec<u8>,
     pub command: Command,
@@ -130,6 +133,10 @@ impl VlessRequest {
         if version != VLESS_VERSION_BETA && version != VLESS_VERSION_RELEASE {
             return Err(anyhow!("Unsupported VLESS version: {}", version));
         }
+
+        // 记录协议版本类型（用于调试）
+        let version_type = if version == VLESS_VERSION_BETA { "BETA" } else { "RELEASE" };
+        debug!("VLESS protocol version: {} ({})", version, version_type);
 
         // UUID (16字节)
         let mut uuid_bytes = [0u8; 16];

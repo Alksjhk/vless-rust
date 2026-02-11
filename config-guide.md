@@ -26,9 +26,6 @@ VLESS-Rust 使用 JSON 格式的配置文件（默认为 `config.json`）。所�
 ### 使用示例配置
 
 ```bash
-# 复制示例配置
-cp config.example.json config.json
-
 # 编辑配置文件
 nano config.json  # 或使用其他编辑器
 
@@ -97,69 +94,9 @@ cargo run -- config.json
 
 **邮箱说明：**
 - 用于生成 VLESS 链接别名
-- 用于流量统计和用户标识
 - 可省略，省略时使用 UUID 前 8 位
 
-### 3. 监控配置 (monitoring)
-
-所有字段都是可选的，未配置时使用默认值。
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `speed_history_duration` | number | 60 | 速度历史记录时长（秒） |
-| `broadcast_interval` | number | 1 | WebSocket 广播间隔（秒） |
-| `websocket_max_connections` | number | 300 | WebSocket 最大连接数 |
-| `websocket_heartbeat_timeout` | number | 60 | WebSocket 心跳超时（秒） |
-| `vless_max_connections` | number | 300 | VLESS 最大连接数 |
-
-**示例：**
-```json
-{
-  "monitoring": {
-    "speed_history_duration": 60,
-    "broadcast_interval": 1,
-    "websocket_max_connections": 300,
-    "websocket_heartbeat_timeout": 60,
-    "vless_max_connections": 300
-  }
-}
-```
-
-**详细说明：**
-
-#### speed_history_duration（速度历史记录时长）
-- **作用**：保留最近 N 秒的速度数据，用于前端图表展示
-- **默认**：60 秒
-- **影响**：前端流量趋势图的时间范围
-- **建议**：30-120 秒
-
-#### broadcast_interval（WebSocket 广播间隔）
-- **作用**：每隔 N 秒向所有连接的前端推送最新监控数据
-- **默认**：1 秒
-- **影响**：
-  - 过小：增加服务器负载
-  - 过大：前端数据更新延迟
-- **建议**：1-5 秒
-
-#### websocket_max_connections（WebSocket 最大连接数）
-- **作用**：允许同时连接的监控页面数量
-- **默认**：300
-- **建议**：根据监控需求调整，单机建议不超过 1000
-
-#### websocket_heartbeat_timeout（WebSocket 心跳超时）
-- **作用**：客户端 N 秒无心跳则断开连接
-- **默认**：60 秒
-- **建议**：30-120 秒，网络不稳定时可适当增大
-
-#### vless_max_connections（VLESS 最大连接数）
-- **作用**：允许同时连接的 VLESS 客户端数量
-- **默认**：300
-- **建议**：
-  - 低配（1GB 内存）：100-200
-  - 中配（2-4GB 内存）：300-500
-  - 高配（8GB+ 内存）：1000+
-
-### 4. 性能优化配置 (performance)
+### 3. 性能优化配置 (performance)
 
 所有字段都是可选的，未配置时使用默认值。
 
@@ -169,9 +106,9 @@ cargo run -- config.json
 | `tcp_recv_buffer` | number | 262144 | TCP 接收缓冲区大小（字节） |
 | `tcp_send_buffer` | number | 262144 | TCP 发送缓冲区大小（字节） |
 | `tcp_nodelay` | boolean | true | 是否启用 TCP_NODELAY |
-| `stats_batch_size` | number | 65536 | 流量统计批量大小（字节） |
 | `udp_timeout` | number | 30 | UDP 会话超时时间（秒） |
 | `udp_recv_buffer` | number | 65536 | UDP 接收缓冲区大小（字节） |
+| `buffer_pool_size` | number | min(32, CPU核心数*4) | 缓冲区池大小 |
 
 **示例：**
 ```json
@@ -181,9 +118,9 @@ cargo run -- config.json
     "tcp_recv_buffer": 262144,
     "tcp_send_buffer": 262144,
     "tcp_nodelay": true,
-    "stats_batch_size": 65536,
     "udp_timeout": 30,
-    "udp_recv_buffer": 65536
+    "udp_recv_buffer": 65536,
+    "buffer_pool_size": 32
   }
 }
 ```
@@ -216,12 +153,16 @@ cargo run -- config.json
   - false：提高吞吐量，适合批量传输
 - **建议**：VLESS 场景建议保持 true
 
-#### stats_batch_size（流量统计批量大小）
-- **作用**：累积 N 字节流量才更新一次统计
-- **默认**：65536 (64KB)
-- **作用**：减少锁竞争，提高性能 90%+
-- **影响**：实时性略有降低，但性能大幅提升
-- **建议**：保持默认值即可
+#### buffer_pool_size（缓冲区池大小）
+- **作用**：预分配的缓冲区数量，减少内存分配开销
+- **默认**：min(32, CPU核心数*4)
+- **影响**：
+  - 增大：提升高并发性能，但增加初始内存占用
+  - 减小：降低内存占用
+- **建议**：
+  - 低并发（<100 连接）：16-32
+  - 中并发（100-1000 连接）：32-64
+  - 高并发（1000+ 连接）：64-128
 
 #### udp_timeout（UDP 会话超时）
 - **作用**：UDP 连接 N 秒无数据则自动关闭
@@ -241,19 +182,6 @@ cargo run -- config.json
   - 一般场景：65536 (64KB)
   - 高吞吐场景：131072 (128KB)
 
-### 5. 监控数据 (monitor)
-
-此部分由服务器自动维护，**请勿手动修改**。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `total_upload_bytes` | number | 总上传字节数（自动统计） |
-| `total_download_bytes` | number | 总下载字节数（自动统计） |
-| `last_update` | string | 最后更新时间（自动维护） |
-| `users` | object | 用户级别统计（自动维护） |
-
-**注意**：手动修改此部分的数据会被服务器覆盖。
-
 ## 性能调优指南
 
 ### 场景 1：高并发（1000+ 连接）
@@ -263,18 +191,14 @@ cargo run -- config.json
   "performance": {
     "buffer_size": 65536,
     "tcp_nodelay": true,
-    "stats_batch_size": 65536
-  },
-  "monitoring": {
-    "vless_max_connections": 1000
+    "buffer_pool_size": 64
   }
 }
 ```
 
 **说明**：
 - 减小缓冲区以降低内存占用
-- 保持批量统计以提高性能
-- 增加最大连接数限制
+- 增加缓冲区池以提升高并发性能
 
 ### 场景 2：高带宽（千兆/万兆网络）
 
@@ -319,23 +243,20 @@ cargo run -- config.json
   "performance": {
     "buffer_size": 65536,
     "tcp_recv_buffer": 131072,
-    "tcp_send_buffer": 131072
-  },
-  "monitoring": {
-    "vless_max_connections": 100,
-    "websocket_max_connections": 50
+    "tcp_send_buffer": 131072,
+    "buffer_pool_size": 16
   }
 }
 ```
 
 **说明**：
 - 减小所有缓冲区
-- 限制最大连接数
+- 减小缓冲区池
 - 降低内存占用
 
 ## 配置验证
 
-服务器启动时会自动验证配置文件。如果配置文件不存在，会自动创建默认配置。
+服务器启动时会自动验证配置文件。如果配置文件不存在，会自动启动配置向导。
 
 ### 检查配置文件
 
@@ -368,15 +289,13 @@ cargo run -- /path/to/config.json
 
 - **默认位置**：`config.json`（与可执行文件同目录）
 - **指定位置**：`cargo run -- /path/to/config.json`
-- **示例配置**：`config.example.json`（含所有配置项）
-- **带注释示例**：`config.example.json5`（含详细注释，JSON5 格式）
+- **首次运行**：自动启动配置向导，引导创建配置文件
 
 ## 完整配置示例
 
-参考项目中的 `config.example.json` 文件，包含所有配置项和默认值。
+参考项目根目录的 `config.json` 文件。
 
 ## 相关文档
 
 - [技术文档](technology.md) - 架构设计和实现细节
-- [API 文档](api.md) - 前后端接口定义
 - [README](../README.md) - 项目说明和使用指南

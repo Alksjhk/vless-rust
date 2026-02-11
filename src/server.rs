@@ -1,25 +1,23 @@
 use crate::protocol::{VlessRequest, VlessResponse, Command, Address};
-use crate::stats::SharedStats;
-use crate::http::{is_http_request, parse_http_request, handle_http_request};
-use crate::ws::{self, SharedWsManager};
-use crate::config::{MonitoringConfig, PerformanceConfig};
+use crate::http::is_http_request;
+use crate::config::PerformanceConfig;
 use crate::buffer_pool::BufferPool;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::collections::{HashSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
+use socket2::SockRef;
 
 /// 配置TCP socket选项
-async fn configure_tcp_socket(
+fn configure_tcp_socket(
     stream: &TcpStream,
-    _recv_buf: usize,
-    _send_buf: usize,
+    recv_buf: usize,
+    send_buf: usize,
     nodelay: bool,
 ) -> Result<()> {
     // 设置TCP_NODELAY，降低延迟
@@ -27,52 +25,26 @@ async fn configure_tcp_socket(
         stream.set_nodelay(true)?;
     }
 
-    // 注意：TCP 缓冲区大小由系统自动调优
-    // 如需手动调整，可通过系统参数配置：
-    // - Linux: /proc/sys/net/ipv4/tcp_rmem/wmem
-    // - Windows: 注册表 TcpWindowSize 参数
-    // 大多数情况下系统默认值已经足够好（通常 64KB-4MB）
+    // 尝试设置TCP缓冲区大小
+    let socket = SockRef::from(stream);
+
+    if recv_buf > 0 {
+        if let Err(e) = socket.set_recv_buffer_size(recv_buf) {
+            debug!("Failed to set recv buffer size to {}: {}", recv_buf, e);
+        } else {
+            debug!("Set recv buffer size to {}", recv_buf);
+        }
+    }
+
+    if send_buf > 0 {
+        if let Err(e) = socket.set_send_buffer_size(send_buf) {
+            debug!("Failed to set send buffer size to {}: {}", send_buf, e);
+        } else {
+            debug!("Set send buffer size to {}", send_buf);
+        }
+    }
 
     Ok(())
-}
-
-/// RAII guard for connection counting
-struct ConnectionGuard {
-    stats: SharedStats,
-    uuid: Arc<str>,
-    _email: Option<Arc<str>>,  // 保留用于日志，但不直接读取
-    released: Arc<AtomicBool>,
-}
-
-impl ConnectionGuard {
-    async fn new(stats: SharedStats, uuid: Arc<str>, email: Option<Arc<str>>) -> Self {
-        {
-            let mut stats_guard = stats.write().await;
-            stats_guard.increment_connections();
-            let email_ref = email.as_ref().map(|e| e.as_ref());
-            stats_guard.increment_user_connection(&uuid, email_ref);
-        }
-        Self {
-            stats,
-            uuid,
-            _email: email,
-            released: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        if !self.released.load(Ordering::SeqCst) {
-            let stats = self.stats.clone();
-            let uuid = self.uuid.clone();
-            tokio::spawn(async move {
-                let mut stats_guard = stats.write().await;
-                stats_guard.decrement_connections();
-                stats_guard.decrement_user_connection(&uuid);
-            });
-        }
-    }
 }
 
 /// VLESS服务器配置
@@ -98,8 +70,6 @@ impl ServerConfig {
         self.user_emails.insert(uuid, email_arc);
     }
 
-    // Removed unused get_user_email method
-
     /// 获取用户邮箱（返回 Arc<str>，推荐使用）
     pub fn get_user_email_arc(&self, uuid: &Uuid) -> Option<Arc<str>> {
         self.user_emails.get(uuid).and_then(|e| e.clone())
@@ -109,9 +79,6 @@ impl ServerConfig {
 /// VLESS服务器
 pub struct VlessServer {
     config: Arc<ServerConfig>,
-    stats: SharedStats,
-    ws_manager: SharedWsManager,
-    monitoring_config: MonitoringConfig,
     performance_config: PerformanceConfig,
     buffer_pool: BufferPool,
 }
@@ -119,9 +86,6 @@ pub struct VlessServer {
 impl VlessServer {
     pub fn new(
         config: ServerConfig,
-        stats: SharedStats,
-        ws_manager: SharedWsManager,
-        monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
     ) -> Self {
         let buffer_pool = BufferPool::new(
@@ -131,9 +95,6 @@ impl VlessServer {
 
         Self {
             config: Arc::new(config),
-            stats,
-            ws_manager,
-            monitoring_config,
             performance_config,
             buffer_pool,
         }
@@ -148,9 +109,6 @@ impl VlessServer {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     let config = Arc::clone(&self.config);
-                    let stats = Arc::clone(&self.stats);
-                    let ws_manager = Arc::clone(&self.ws_manager);
-                    let monitoring_config = self.monitoring_config.clone();
                     let performance_config = self.performance_config.clone();
                     let buffer_pool = self.buffer_pool.clone();
                     tokio::spawn(async move {
@@ -158,9 +116,6 @@ impl VlessServer {
                             stream,
                             addr,
                             config,
-                            stats,
-                            ws_manager,
-                            monitoring_config,
                             performance_config,
                             buffer_pool,
                         ).await {
@@ -180,9 +135,6 @@ impl VlessServer {
         mut stream: TcpStream,
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
-        stats: SharedStats,
-        ws_manager: SharedWsManager,
-        monitoring_config: MonitoringConfig,
         performance_config: PerformanceConfig,
         buffer_pool: BufferPool,
     ) -> Result<()> {
@@ -194,43 +146,21 @@ impl VlessServer {
             performance_config.tcp_recv_buffer,
             performance_config.tcp_send_buffer,
             performance_config.tcp_nodelay,
-        ).await?;
+        )?;
 
         // 读取请求数据
         let mut header_buf = vec![0u8; performance_config.buffer_size.min(4096)];
         let n = stream.read(&mut header_buf).await?;
         if n == 0 {
-            return Err(anyhow!("Connection closed by client"));
+            return Err(anyhow!("Connection closed by client (addr: {})", client_addr));
         }
 
         let header_bytes = Bytes::from(header_buf[..n].to_vec());
 
-        // 检测HTTP请求
+        // 检测HTTP请求 - 拒绝HTTP请求
         if is_http_request(&header_bytes) {
-            debug!("HTTP request detected from {}", client_addr);
-            match parse_http_request(&header_bytes) {
-                Ok(request) => {
-                    // 检测 WebSocket 升级请求
-                    if ws::is_websocket_upgrade(&request) {
-                        debug!("WebSocket upgrade request detected from {} to {}", client_addr, request.path);
-                        return ws::handle_websocket_connection(
-                            stream,
-                            ws_manager,
-                            stats,
-                            client_addr,
-                            Some(header_bytes.to_vec())
-                        ).await;
-                    }
-
-                    let response = handle_http_request(&request, stats.clone(), monitoring_config.clone(), performance_config.clone()).await?;
-                    stream.write_all(&response).await?;
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Failed to parse HTTP request from {}: {}", client_addr, e);
-                    return Err(e);
-                }
-            }
+            warn!("HTTP request detected from {} - rejecting (only VLESS protocol supported)", client_addr);
+            return Err(anyhow!("HTTP requests not supported (addr: {})", client_addr));
         }
 
         // 解析VLESS请求
@@ -240,33 +170,11 @@ impl VlessServer {
 
         // 验证用户UUID
         if !config.users.contains(&request.uuid) {
-            warn!("Invalid UUID from {}: {}", client_addr, request.uuid);
-            return Err(anyhow!("Invalid user UUID"));
+            warn!("Invalid UUID from {}: {} (not in config)", client_addr, request.uuid);
+            return Err(anyhow!("Authentication failed: invalid user UUID (addr: {})", client_addr));
         }
 
         info!("Authenticated user {} from {}", request.uuid, client_addr);
-
-        let uuid_str: Arc<str> = Arc::from(request.uuid.to_string());
-        let user_email = config.get_user_email_arc(&request.uuid);
-
-        // 检查VLESS连接数限制
-        let current_connections = {
-            let stats_guard = stats.read().await;
-            stats_guard.get_active_connections()
-        };
-
-        if current_connections >= monitoring_config.vless_max_connections {
-            warn!("VLESS connection limit reached: {}/{} from {}",
-                  current_connections, monitoring_config.vless_max_connections, client_addr);
-            {
-                let stats_guard = stats.write().await;
-                stats_guard.increment_rejected_connections();
-            }
-            return Err(anyhow!("Server connection limit reached"));
-        }
-
-        // RAII guard for connection counting
-        let _guard = ConnectionGuard::new(stats.clone(), uuid_str.clone(), user_email.clone()).await;
 
         // 发送响应头 - 使用与请求相同的版本号
         let response = VlessResponse::new_with_version(request.version);
@@ -276,11 +184,11 @@ impl VlessServer {
         let result = match request.command {
             Command::Tcp => {
                 let user_email = config.get_user_email_arc(&request.uuid);
-                Self::handle_tcp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email, buffer_pool.clone()).await
+                Self::handle_tcp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool.clone()).await
             }
             Command::Udp => {
                 let user_email = config.get_user_email_arc(&request.uuid);
-                Self::handle_udp_proxy(stream, request, remaining_data, stats.clone(), performance_config, user_email, buffer_pool).await
+                Self::handle_udp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool).await
             }
             Command::Mux => {
                 warn!("Mux command not implemented yet");
@@ -296,14 +204,10 @@ impl VlessServer {
         client_stream: TcpStream,
         request: VlessRequest,
         initial_data: Bytes,
-        stats: SharedStats,
         perf_config: PerformanceConfig,
-        user_email: Option<Arc<str>>,
+        _user_email: Option<Arc<str>>,
         buffer_pool: BufferPool,
     ) -> Result<()> {
-        let uuid_str = Arc::from(request.uuid.to_string());
-        let email_opt = user_email;
-
         // 连接到目标服务器
         let target_addr = match &request.address {
             Address::Domain(domain) => {
@@ -326,18 +230,12 @@ impl VlessServer {
             perf_config.tcp_recv_buffer,
             perf_config.tcp_send_buffer,
             perf_config.tcp_nodelay,
-        ).await?;
+        )?;
 
-        // 如果有初始数据，先发送给目标服务器并统计上传流量
+        // 如果有初始数据，先发送给目标服务器
         let initial_len = initial_data.len();
         if initial_len > 0 {
             target_stream.write_all(&initial_data).await?;
-            {
-                let mut stats_guard = stats.write().await;
-                stats_guard.add_upload_bytes(initial_len as u64);
-                let email_ref = email_opt.as_ref().map(|e| e.as_ref());
-                stats_guard.add_user_upload_bytes(&uuid_str, initial_len as u64, email_ref);
-            }
         }
 
         info!("Established proxy connection: {} -> {}",
@@ -347,96 +245,41 @@ impl VlessServer {
         let (mut client_read, mut client_write) = client_stream.into_split();
         let (mut target_read, mut target_write) = target_stream.into_split();
 
-        let stats_c2t = stats.clone();
-        let stats_t2c = stats.clone();
-        let uuid_c2t = uuid_str.clone();
-        let uuid_t2c = uuid_str.clone();
-        let email_c2t = email_opt.clone();
-        let email_t2c = email_opt;
-        let batch_size = perf_config.stats_batch_size as u64;
         let buffer_pool_c2t = buffer_pool.clone();
         let buffer_pool_t2c = buffer_pool;
 
-        // 客户端→目标（上传）任务 - 使用批量统计
+        // 客户端→目标任务
         let upload_task = tokio::spawn(async move {
-            let mut buffer = buffer_pool_c2t.acquire();  // 从池中租借缓冲区
-            let mut total = 0u64;
-            let mut batch_total = 0u64;
+            let mut buffer = buffer_pool_c2t.acquire();
 
             loop {
                 match client_read.read(&mut buffer[..]).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        total += n as u64;
-                        batch_total += n as u64;
-
                         if target_write.write_all(&buffer[..n]).await.is_err() {
                             break;
-                        }
-
-                        // 批量更新统计，使用单次锁定
-                        if batch_total >= batch_size {
-                            let mut stats_guard = stats_c2t.write().await;
-                            stats_guard.add_upload_bytes(batch_total);
-                            let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
-                            stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
-                            batch_total = 0;
                         }
                     }
                     Err(_) => break,
                 }
             }
-
-            // 处理剩余的批量统计
-            if batch_total > 0 {
-                let mut stats_guard = stats_c2t.write().await;
-                stats_guard.add_upload_bytes(batch_total);
-                let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
-                stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
-            }
-
-            total
         });
 
-        // 目标→客户端（下载）任务 - 使用批量统计
+        // 目标→客户端任务
         let download_task = tokio::spawn(async move {
-            let mut buffer = buffer_pool_t2c.acquire();  // 从池中租借缓冲区
-            let mut total = 0u64;
-            let mut batch_total = 0u64;
+            let mut buffer = buffer_pool_t2c.acquire();
 
             loop {
                 match target_read.read(&mut buffer[..]).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        total += n as u64;
-                        batch_total += n as u64;
-
                         if client_write.write_all(&buffer[..n]).await.is_err() {
                             break;
-                        }
-
-                        // 批量更新统计，使用单次锁定
-                        if batch_total >= batch_size {
-                            let mut stats_guard = stats_t2c.write().await;
-                            stats_guard.add_download_bytes(batch_total);
-                            let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
-                            stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
-                            batch_total = 0;
                         }
                     }
                     Err(_) => break,
                 }
             }
-
-            // 处理剩余的批量统计
-            if batch_total > 0 {
-                let mut stats_guard = stats_t2c.write().await;
-                stats_guard.add_download_bytes(batch_total);
-                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
-                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
-            }
-
-            total
         });
 
         // 等待两个任务完成
@@ -451,13 +294,10 @@ impl VlessServer {
         client_stream: TcpStream,
         request: VlessRequest,
         _initial_data: Bytes,
-        stats: SharedStats,
         perf_config: PerformanceConfig,
-        user_email: Option<Arc<str>>,
+        _user_email: Option<Arc<str>>,
         buffer_pool: BufferPool,
     ) -> Result<()> {
-        let uuid_str: Arc<str> = Arc::from(request.uuid.to_string());
-
         // 解析目标地址
         let target_addr = match &request.address {
             Address::Domain(domain) => {
@@ -478,27 +318,17 @@ impl VlessServer {
         let local_addr = udp_socket.local_addr()?;
         debug!("UDP socket bound to {}", local_addr);
 
-        let batch_size = perf_config.stats_batch_size as u64;
         let udp_timeout = perf_config.udp_timeout;
-        let _udp_recv_buffer = perf_config.udp_recv_buffer;  // 保留用于未来功能
-
-        // 注意：UDP 缓冲区大小由系统自动调优
-        // 如需手动调整，可通过系统参数配置
 
         // 分离TCP流
         let (mut client_read, mut client_write) = client_stream.into_split();
 
         // 任务1：客户端 → 目标（读取TCP数据，发送UDP包）
         let udp_socket_c2t = Arc::clone(&udp_socket);
-        let stats_c2t = stats.clone();
-        let uuid_c2t = uuid_str.clone();
-        let email_c2t = user_email.clone();
         let buffer_pool_c2t = buffer_pool.clone();
 
         let client_to_target = tokio::spawn(async move {
-            let mut buffer = buffer_pool_c2t.acquire();  // 从池中租借缓冲区
-            let mut total = 0u64;
-            let mut batch_total = 0u64;
+            let mut buffer = buffer_pool_c2t.acquire();
 
             loop {
                 // 超时检测
@@ -511,22 +341,10 @@ impl VlessServer {
                         break;
                     }
                     Ok(Ok(n)) => {
-                        total += n as u64;
-                        batch_total += n as u64;
-
                         // 发送UDP包到目标
                         if let Err(e) = udp_socket_c2t.send_to(&buffer[..n], target_addr).await {
                             warn!("Failed to send UDP packet: {}", e);
                             break;
-                        }
-
-                        // 批量更新统计，使用单次锁定
-                        if batch_total >= batch_size {
-                            let mut stats_guard = stats_c2t.write().await;
-                            stats_guard.add_upload_bytes(batch_total);
-                            let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
-                            stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
-                            batch_total = 0;
                         }
                     }
                     Ok(Err(e)) => {
@@ -539,68 +357,44 @@ impl VlessServer {
                     }
                 }
             }
-
-            // 处理剩余的批量统计
-            if batch_total > 0 {
-                let mut stats_guard = stats_c2t.write().await;
-                stats_guard.add_upload_bytes(batch_total);
-                let email_ref = email_c2t.as_ref().map(|e| e.as_ref());
-                stats_guard.add_user_upload_bytes(&uuid_c2t, batch_total, email_ref);
-            }
-
-            total
         });
 
         // 任务2：目标 → 客户端（接收UDP包，写入TCP流）
         let udp_socket_t2c = Arc::clone(&udp_socket);
-        let stats_t2c = stats.clone();
-        let uuid_t2c = uuid_str.clone();
-        let email_t2c = user_email;
         let buffer_pool_t2c = buffer_pool;
 
         let target_to_client = tokio::spawn(async move {
-            let mut buffer = buffer_pool_t2c.acquire();  // 从池中租借缓冲区
-            let mut total = 0u64;
-            let mut batch_total = 0u64;
+            let mut buffer = buffer_pool_t2c.acquire();
 
             loop {
-                match udp_socket_t2c.recv_from(&mut buffer).await {
-                    Ok((n, src)) => {
-                        // 只接收来自目标地址的UDP包
-                        if src == target_addr {
-                            total += n as u64;
-                            batch_total += n as u64;
+                // 添加超时检测，防止客户端断开时任务永远阻塞
+                let timeout_duration = std::time::Duration::from_secs(udp_timeout);
+                let timeout_result = tokio::time::timeout(
+                    timeout_duration,
+                    udp_socket_t2c.recv_from(&mut buffer)
+                ).await;
 
-                            if client_write.write_all(&buffer[..n]).await.is_err() {
-                                break;
-                            }
-
-                            // 批量更新统计，使用单次锁定
-                            if batch_total >= batch_size {
-                                let mut stats_guard = stats_t2c.write().await;
-                                stats_guard.add_download_bytes(batch_total);
-                                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
-                                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
-                                batch_total = 0;
-                            }
+                match timeout_result {
+                    Ok(Ok((n, src))) => {
+                        // 只接收来自目标地址的UDP包，忽略其他源
+                        if src != target_addr {
+                            debug!("Ignoring UDP packet from unexpected source: {}", src);
+                            continue;
+                        }
+                        if client_write.write_all(&buffer[..n]).await.is_err() {
+                            break;
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!("Error receiving UDP packet: {}", e);
+                        break;
+                    }
+                    Err(_) => {
+                        debug!("UDP receive timeout after {}s of inactivity", udp_timeout);
                         break;
                     }
                 }
             }
-
-            // 处理剩余的批量统计
-            if batch_total > 0 {
-                let mut stats_guard = stats_t2c.write().await;
-                stats_guard.add_download_bytes(batch_total);
-                let email_ref = email_t2c.as_ref().map(|e| e.as_ref());
-                stats_guard.add_user_download_bytes(&uuid_t2c, batch_total, email_ref);
-            }
-
-            total
         });
 
         // 等待两个任务完成

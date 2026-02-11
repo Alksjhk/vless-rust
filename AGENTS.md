@@ -48,7 +48,6 @@
 
 3. **文档同步**:
    - 修改功能时同步更新 `docs/technology.md`
-   - 修改 API 时同步更新 `docs/api.md`
    - 使用 `/docs` 技能进行文档更新
 
 ### 功能开发流程
@@ -125,20 +124,14 @@
    - 数据流
    - 性能优化
 
-4. **docs/api.md**:
-   - API 端点
-   - 请求/响应格式
-   - 错误码
-   - 使用示例
-
 ### 可选文档
 
-5. **docs/code-review.md**:
+4. **docs/code-review.md**:
    - 代码审查报告
    - 问题列表
    - 改进建议
 
-6. **docs/更新日志.md**:
+5. **docs/更新日志.md**:
    - 格式: `YYYY.MM.DD-更新主题.md`
    - 记录每次提交的功能变更
 
@@ -156,12 +149,6 @@
 - 错误处理: anyhow
 - 日志: tracing
 - 序列化: serde
-
-### 前端 (Vue 3)
-- 框架: Vue 3 (Composition API)
-- 构建工具: Vite (rolldown-vite)
-- 状态管理: Composables
-- 样式: CSS 变量
 
 ### 禁止事项
 - ❌ 修改技术栈（未经明确同意）
@@ -184,21 +171,11 @@ project/
 │  ├─ config.rs           # 配置模块
 │  ├─ protocol.rs         # 协议处理
 │  ├─ server.rs           # 服务器逻辑
-│  ├─ stats.rs            # 统计模块
-│  ├─ http.rs             # HTTP 处理
-│  └─ ws.rs               # WebSocket
-├─ frontend/              # 前端项目
-│  ├─ package.json        # NPM 配置
-│  ├─ vite.config.js      # Vite 配置
-│  └─ src/
-│     ├─ main.js          # 入口
-│     ├─ App.vue          # 根组件
-│     ├─ components/      # 组件
-│     └─ composables/     # Composables
-├─ static/                # 前端构建产物
+│  ├─ http.rs             # HTTP 请求检测
+│  ├─ utils.rs            # 工具函数
+│  └─ wizard.rs           # 配置向导
 ├─ docs/                  # 文档目录
 │  ├─ technology.md       # 技术文档
-│  ├─ api.md              # API 文档
 │  └─ *.md                # 其他文档
 └─ target/                # 编译输出
 ```
