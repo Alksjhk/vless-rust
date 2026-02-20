@@ -17,6 +17,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       should_build: ${{ steps.check-version.outputs.should_build }}
       tag_name: ${{ steps.version.outputs.tag_name }}
+      release_body: ${{ steps.version.outputs.release_body }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -47,16 +48,23 @@ jobs:
 
         # 从提交信息中查找版本号（格式：x.x.x 或 x.x.xx）
         # 查找第一个匹配的版本号（只提取数字部分，不包括描述文字）
-        VERSION=$(echo "$COMMITS" | grep -m 1 -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+        # 并提取版本号后面的内容作为 release 更新内容
+        VERSION_LINE=$(echo "$COMMITS" | grep -m 1 -E '^[0-9]+\.[0-9]+\.[0-9]+' || echo "")
 
-        if [ -n "$VERSION" ]; then
+        if [ -n "$VERSION_LINE" ]; then
+          # 提取版本号
+          VERSION=$(echo "$VERSION_LINE" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          # 提取版本号后面的内容（去除空格）
+          RELEASE_BODY=$(echo "$VERSION_LINE" | sed 's/^[0-9]\+\.[0-9]\+\.[0-9]\+ *//')
           echo "✓ Found version in commit: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
+          echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
         else
           echo "✗ No version found in commit messages"
           echo "version=none" >> $GITHUB_OUTPUT
           echo "tag_name=none" >> $GITHUB_OUTPUT
+          echo "release_body=none" >> $GITHUB_OUTPUT
         fi
 
     - name: Check if version already exists
@@ -261,7 +269,54 @@ jobs:
     - name: Generate release notes
       run: |
         VERSION="${{ needs.extract-version.outputs.version }}"
-        cat > release_notes.md << EOF
+        RELEASE_BODY="${{ needs.extract-version.outputs.release_body }}"
+
+        # 如果有 commit 消息内容，使用它；否则使用默认内容
+        if [ -n "$RELEASE_BODY" ] && [ "$RELEASE_BODY" != "none" ]; then
+          cat > release_notes.md << EOF
+        ## VLESS-Rust $VERSION
+
+        ### 更新内容
+
+        $RELEASE_BODY
+
+        ### 跨平台静态链接构建
+
+        所有平台的二进制文件均为静态链接构建，无需额外依赖即可运行。
+
+        Linux 版本使用 musl 静态链接，可在各种 Linux 发行版上运行（Alpine、Ubuntu、CentOS、Debian 等）。
+
+        ### 下载说明
+
+        根据您的系统选择对应的文件：
+
+        - **Windows AMD64**: `vless-rust-windows-amd64.exe` - Intel/AMD 64位 Windows
+        - **Linux AMD64**: `vless-rust-linux-amd64` - x86_64 架构 Linux（通用）
+        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux（树莓派 4+、云服务器等）
+        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux（树莓派 3 及以下）
+
+        ### 使用方法
+
+        1. 下载对应平台的二进制文件
+        2. 添加执行权限（Linux/macOS）：`chmod +x vless-rust-*`
+        3. 运行：`./vless-rust-xxx` 或 `vless-rust-xxx.exe`
+        4. 首次运行会自动生成 `config.json` 配置文件
+
+        ### 验证静态链接
+
+        Linux 用户可以使用以下命令验证：
+        \`\`\`bash
+        file vless-rust-xxx
+        ldd vless-rust-xxx 2>&1 | grep "not a dynamic" && echo "✓ 静态链接"
+        \`\`\`
+
+        ### 系统要求
+
+        - **Windows**: Windows 7 或更高版本
+        - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
+        EOF
+        else
+          cat > release_notes.md << EOF
         ## VLESS-Rust $VERSION
 
         ### 跨平台静态链接构建
@@ -299,6 +354,7 @@ jobs:
         - **Windows**: Windows 7 或更高版本
         - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
         EOF
+        fi
 
         cat release_notes.md
 
