@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-这是一个基于 Rust 和 Tokio 实现的高性能 VLESS 协议服务器。项目遵循 xray-core 的 VLESS 协议规范，支持版本 0（测试版）和版本 1（正式版）。
+这是一个基于 Rust 和 Tokio 实现的高性能 VLESS 协议服务器。项目遵循 xray-core 的 VLESS 协议规范，支持版本 0（测试版）和版本 1（正式版）。支持 TCP 和 WebSocket (WS) 两种传输协议。
 
 ## 常用命令
 
@@ -33,13 +33,14 @@ cargo check
 **后端核心模块：**
 
 - `src/main.rs`: 程序入口，负责配置加载和服务器启动
-- `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
+- `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置，包含协议类型枚举
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
-- `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发
+- `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发，支持 WS 协议
 - `src/http.rs`: HTTP 请求检测（用于区分 HTTP 和 VLESS 请求）
 - `src/utils.rs`: 工具函数，VLESS URL 生成
-- `src/wizard.rs`: 配置向导，交互式生成配置文件
+- `src/wizard.rs`: 配置向导，交互式生成配置文件，包含协议选择功能
 - `src/buffer_pool.rs`: 缓冲区池，复用缓冲区减少内存分配
+- `src/ws.rs`: WebSocket 协议处理，包含握手升级和消息转发
 
 ### 关键设计模式
 
@@ -53,13 +54,19 @@ cargo check
 - **可配置缓冲区**：默认128KB，适配高带宽场景
 - **缓冲区池**：复用缓冲区，减少内存分配开销
 
+**多协议支持：**
+- TCP 直连模式：原始 VLESS over TCP
+- WebSocket 模式：VLESS over WebSocket，支持自定义路径
+
 ### 配置文件结构
 
 ```json
 {
   "server": {
     "listen": "0.0.0.0",
-    "port": 8443
+    "port": 8443,
+    "protocol": "tcp",
+    "ws_path": "/"
   },
   "users": [
     {
@@ -88,13 +95,14 @@ cargo check
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
 | `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器 |
-| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
+| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerSettings`、`UserConfig`、`PerformanceConfig`、`ProtocolType` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()`、`handle_ws_connection()` |
 | `src/http.rs` | HTTP 请求检测 | `is_http_request()` |
 | `src/utils.rs` | 工具函数、URL生成 | `generate_vless_url()` |
-| `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
+| `src/wizard.rs` | 配置向导 | `ConfigWizard::run()`、`prompt_protocol()` |
 | `src/buffer_pool.rs` | 缓冲区池 | `BufferPool` |
+| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`read_first_message()`、`generate_accept_key()` |
 
 ### 配置文件
 
@@ -116,11 +124,12 @@ cargo check
 **需要修改/查找...**
 
 - **服务器启动流程** → `src/main.rs:main()`
-- **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`
+- **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`、`ProtocolType`
 - **VLESS 协议解析** → `src/protocol.rs:VlessRequest::decode()`
 - **用户认证逻辑** → `src/server.rs:handle_connection()`
 - **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
 - **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
+- **WebSocket 协议处理** → `src/server.rs:handle_ws_connection()`、`src/ws.rs`
 - **HTTP 请求检测** → `src/http.rs:is_http_request()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点

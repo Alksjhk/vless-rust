@@ -1,7 +1,9 @@
 use crate::protocol::{VlessRequest, VlessResponse, Command, Address};
 use crate::http::is_http_request;
-use crate::config::PerformanceConfig;
+use crate::config::{PerformanceConfig, ProtocolType};
 use crate::buffer_pool::BufferPool;
+use crate::ws;
+use crate::utils::configure_tcp_socket;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::collections::{HashSet, HashMap};
@@ -9,43 +11,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::sync::Semaphore;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
-use socket2::SockRef;
-
-/// 配置TCP socket选项
-fn configure_tcp_socket(
-    stream: &TcpStream,
-    recv_buf: usize,
-    send_buf: usize,
-    nodelay: bool,
-) -> Result<()> {
-    // 设置TCP_NODELAY，降低延迟
-    if nodelay {
-        stream.set_nodelay(true)?;
-    }
-
-    // 尝试设置TCP缓冲区大小
-    let socket = SockRef::from(stream);
-
-    if recv_buf > 0 {
-        if let Err(e) = socket.set_recv_buffer_size(recv_buf) {
-            debug!("Failed to set recv buffer size to {}: {}", recv_buf, e);
-        } else {
-            debug!("Set recv buffer size to {}", recv_buf);
-        }
-    }
-
-    if send_buf > 0 {
-        if let Err(e) = socket.set_send_buffer_size(send_buf) {
-            debug!("Failed to set send buffer size to {}: {}", send_buf, e);
-        } else {
-            debug!("Set send buffer size to {}", send_buf);
-        }
-    }
-
-    Ok(())
-}
 
 /// VLESS服务器配置
 #[derive(Debug, Clone)]
@@ -53,6 +21,8 @@ pub struct ServerConfig {
     pub bind_addr: SocketAddr,
     pub users: HashSet<Uuid>,
     pub user_emails: HashMap<Uuid, Option<Arc<str>>>,
+    pub protocol: ProtocolType,
+    pub ws_path: String,
 }
 
 impl ServerConfig {
@@ -61,6 +31,8 @@ impl ServerConfig {
             bind_addr,
             users: HashSet::new(),
             user_emails: HashMap::new(),
+            protocol: ProtocolType::Tcp,
+            ws_path: "/".to_string(),
         }
     }
 
@@ -79,8 +51,9 @@ impl ServerConfig {
 /// VLESS服务器
 pub struct VlessServer {
     config: Arc<ServerConfig>,
-    performance_config: PerformanceConfig,
+    performance_config: Arc<PerformanceConfig>,
     buffer_pool: BufferPool,
+    connection_semaphore: Arc<Semaphore>,
 }
 
 impl VlessServer {
@@ -93,17 +66,45 @@ impl VlessServer {
             performance_config.buffer_pool_size,
         );
 
+        // 创建连接数限制信号量
+        let max_connections = performance_config.max_connections;
+        let connection_semaphore = if max_connections == 0 {
+            // 无限制：创建一个永远不会耗尽的信号量
+            Arc::new(Semaphore::new(usize::MAX))
+        } else {
+            Arc::new(Semaphore::new(max_connections))
+        };
+
         Self {
             config: Arc::new(config),
-            performance_config,
+            performance_config: Arc::new(performance_config),
             buffer_pool,
+            connection_semaphore,
         }
     }
 
     /// 启动服务器
     pub async fn run(&self) -> Result<()> {
         let listener = TcpListener::bind(self.config.bind_addr).await?;
-        info!("VLESS server listening on {}", self.config.bind_addr);
+        let protocol_str = match self.config.protocol {
+            ProtocolType::Tcp => "TCP",
+            ProtocolType::WebSocket => "WebSocket",
+        };
+        let ws_path_info = if self.config.protocol == ProtocolType::WebSocket {
+            format!(" (path: {})", self.config.ws_path)
+        } else {
+            String::new()
+        };
+
+        let max_conn_info = if self.performance_config.max_connections == 0 {
+            "unlimited".to_string()
+        } else {
+            format!("{}", self.performance_config.max_connections)
+        };
+
+        info!("VLESS server listening on {} [{}{}]",
+              self.config.bind_addr, protocol_str, ws_path_info);
+        info!("Maximum connections: {}", max_conn_info);
 
         loop {
             match listener.accept().await {
@@ -111,7 +112,21 @@ impl VlessServer {
                     let config = Arc::clone(&self.config);
                     let performance_config = self.performance_config.clone();
                     let buffer_pool = self.buffer_pool.clone();
+                    let semaphore = Arc::clone(&self.connection_semaphore);
+
                     tokio::spawn(async move {
+                        // 尝试获取连接许可
+                        let permit = match semaphore.try_acquire() {
+                            Ok(p) => p,
+                            Err(_) => {
+                                warn!("Connection limit reached, rejecting from {}", addr);
+                                return;
+                            }
+                        };
+
+                        // permit 会在任务结束时自动释放
+                        let _permit = permit;
+
                         if let Err(e) = Self::handle_connection(
                             stream,
                             addr,
@@ -132,10 +147,10 @@ impl VlessServer {
 
     /// 处理客户端连接
     async fn handle_connection(
-        mut stream: TcpStream,
+        stream: TcpStream,
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
-        performance_config: PerformanceConfig,
+        performance_config: Arc<PerformanceConfig>,
         buffer_pool: BufferPool,
     ) -> Result<()> {
         debug!("New connection from {}", client_addr);
@@ -148,6 +163,37 @@ impl VlessServer {
             performance_config.tcp_nodelay,
         )?;
 
+        // 根据协议类型处理
+        match config.protocol {
+            ProtocolType::Tcp => {
+                Self::handle_tcp_connection(
+                    stream,
+                    client_addr,
+                    config,
+                    performance_config,
+                    buffer_pool,
+                ).await
+            }
+            ProtocolType::WebSocket => {
+                Self::handle_ws_connection(
+                    stream,
+                    client_addr,
+                    config,
+                    performance_config,
+                    buffer_pool,
+                ).await
+            }
+        }
+    }
+
+    /// 处理 TCP 连接
+    async fn handle_tcp_connection(
+        mut stream: TcpStream,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        performance_config: Arc<PerformanceConfig>,
+        buffer_pool: BufferPool,
+    ) -> Result<()> {
         // 读取请求数据
         let mut header_buf = vec![0u8; performance_config.buffer_size.min(4096)];
         let n = stream.read(&mut header_buf).await?;
@@ -199,12 +245,151 @@ impl VlessServer {
         result
     }
 
+    /// 处理 WebSocket 连接
+    async fn handle_ws_connection(
+        stream: TcpStream,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        performance_config: Arc<PerformanceConfig>,
+        buffer_pool: BufferPool,
+    ) -> Result<()> {
+        // 执行 WebSocket 握手并读取第一个消息
+        let (ws_stream, first_data) = ws::handle_ws_upgrade(
+            stream,
+            &config.ws_path,
+            client_addr,
+            performance_config.ws_header_buffer_size,
+        ).await?;
+
+        // 解析VLESS请求
+        let header_bytes = Bytes::from(first_data);
+        let (request, remaining_data) = VlessRequest::decode(header_bytes)?;
+
+        debug!("Parsed VLESS request via WebSocket: {:?}", request);
+
+        // 验证用户UUID
+        if !config.users.contains(&request.uuid) {
+            warn!("Invalid UUID from {}: {} (not in config)", client_addr, request.uuid);
+            return Err(anyhow!("Authentication failed: invalid user UUID (addr: {})", client_addr));
+        }
+
+        info!("Authenticated user {} via WebSocket from {}", request.uuid, client_addr);
+
+        // 发送 VLESS 响应头（必须发送，否则客户端无法建立连接）
+        let response = VlessResponse::new_with_version(request.version);
+
+        use futures_util::{SinkExt, StreamExt};
+        use tungstenite::Message;
+
+        // 将响应头封装为 WebSocket 消息发送给客户端
+        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+        if let Err(e) = ws_sender.send(Message::Binary(response.encode().to_vec())).await {
+            return Err(anyhow!("Failed to send VLESS response via WebSocket: {}", e));
+        }
+
+        debug!("Sent VLESS response via WebSocket to {}", client_addr);
+
+        // 检查是否有剩余数据（第一个消息中的实际负载）
+        let has_initial_data = !remaining_data.is_empty();
+        if has_initial_data {
+            debug!("First WebSocket message contains {} bytes of payload data", remaining_data.len());
+        }
+
+        // 解析目标地址
+        let target_addr = match &request.address {
+            Address::Domain(domain) => {
+                let addr_str = format!("{}:{}", domain, request.port);
+                let resolved = tokio::net::lookup_host(&addr_str)
+                    .await?
+                    .next()
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                resolved
+            }
+            _ => request.address.to_socket_addr(request.port)?,
+        };
+
+        debug!("Connecting to target via WebSocket: {}", target_addr);
+
+        // 连接到目标服务器
+        let target_stream = TcpStream::connect(target_addr).await?;
+
+        // 配置目标连接的 TCP 参数
+        ws::configure_tcp_socket(
+            &target_stream,
+            performance_config.tcp_recv_buffer,
+            performance_config.tcp_send_buffer,
+            performance_config.tcp_nodelay,
+        )?;
+
+        info!("Established WebSocket proxy connection: {:?} -> {}",
+               request.address, target_addr);
+
+        // 分离目标流并转发数据
+        let (mut target_read, mut target_write) = target_stream.into_split();
+
+        let buffer_pool_t2c = buffer_pool;
+
+        // 客户端 → 目标（通过 WebSocket）
+        let upload_task = tokio::spawn(async move {
+            // 首先发送第一个消息中的剩余数据（如果有）
+            if has_initial_data && !remaining_data.is_empty() {
+                if target_write.write_all(&remaining_data).await.is_err() {
+                    return;
+                }
+            }
+
+            // 继续转发后续的 WebSocket 消息
+            loop {
+                // 使用 StreamExt::next 读取 WebSocket 消息
+                match ws_receiver.next().await {
+                    Some(Ok(Message::Binary(data))) => {
+                        if target_write.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        if target_write.write_all(text.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // 目标 → 客户端（通过 WebSocket）
+        let download_task = tokio::spawn(async move {
+            let mut buffer = buffer_pool_t2c.acquire();
+
+            loop {
+                match target_read.read(&mut buffer[..]).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if ws_sender.send(Message::Binary(buffer[..n].to_vec())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // 等待两个任务完成
+        let _ = tokio::join!(upload_task, download_task);
+
+        debug!("WebSocket proxy connection closed");
+        Ok(())
+    }
+
     /// 处理TCP代理
     async fn handle_tcp_proxy(
         client_stream: TcpStream,
         request: VlessRequest,
         initial_data: Bytes,
-        perf_config: PerformanceConfig,
+        perf_config: Arc<PerformanceConfig>,
         _user_email: Option<Arc<str>>,
         buffer_pool: BufferPool,
     ) -> Result<()> {
@@ -294,7 +479,7 @@ impl VlessServer {
         client_stream: TcpStream,
         request: VlessRequest,
         _initial_data: Bytes,
-        perf_config: PerformanceConfig,
+        perf_config: Arc<PerformanceConfig>,
         _user_email: Option<Arc<str>>,
         buffer_pool: BufferPool,
     ) -> Result<()> {

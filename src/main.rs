@@ -4,6 +4,8 @@ mod config;
 mod http;
 mod wizard;
 mod buffer_pool;
+mod ws;
+mod utils;
 
 use anyhow::Result;
 use config::Config;
@@ -19,8 +21,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt::init();
+    // 初始化日志（默认 info 级别，可通过 RUST_LOG 环境变量配置）
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
 
     // 读取配置文件路径
     let config_path = env::args()
@@ -69,6 +76,8 @@ async fn main() -> Result<()> {
 
     // 添加用户及邮箱信息
     let mut server_config = ServerConfig::new(bind_addr);
+    server_config.protocol = config.server.protocol;
+    server_config.ws_path = config.server.ws_path.clone();
 
     for user in &config.users {
         if let Ok(uuid) = uuid::Uuid::parse_str(&user.uuid) {

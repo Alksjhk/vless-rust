@@ -6,6 +6,7 @@
 
 - 完整的VLESS协议支持（版本0和版本1）
 - 异步I/O处理（基于Tokio）
+- **多协议传输**：支持 TCP 和 WebSocket (WS) 传输
 - TCP代理转发
 - UDP over TCP 支持
 - 多用户UUID认证
@@ -75,6 +76,10 @@ cargo run
 向导会引导您完成以下配置：
 - **服务器监听地址**（默认：0.0.0.0）
 - **服务器监听端口**（默认：443）
+- **协议类型**（默认：TCP）
+  - TCP：直接 TCP 连接，推荐用于需要端口转发的场景
+  - WebSocket：WS 协议，可绕过防火墙限制
+  - WebSocket 路径（仅 WS 模式，默认：/）
 - **用户配置**
   - 用户 UUID（自动生成或手动输入）
   - 用户邮箱（可选，用于标识）
@@ -89,7 +94,9 @@ cargo run
 {
   "server": {
     "listen": "0.0.0.0",
-    "port": 8443
+    "port": 8443,
+    "protocol": "tcp",
+    "ws_path": "/"
   },
   "users": [
     {
@@ -123,7 +130,11 @@ cargo run
 - **端口**: 8443（或配置文件中设置的端口）
 - **UUID**: 配置文件中的用户UUID
 - **加密**: none
-- **传输协议**: TCP
+- **传输协议**: TCP 或 WebSocket（根据服务器配置）
+
+**WebSocket 客户端配置**（当服务器使用 WS 协议时）：
+- **传输协议**: WebSocket
+- **WebSocket 路径**: /（或配置文件中设置的 ws_path）
 
 ## 配置说明
 
@@ -135,7 +146,9 @@ cargo run
 {
   "server": {
     "listen": "0.0.0.0",
-    "port": 8443
+    "port": 8443,
+    "protocol": "tcp",
+    "ws_path": "/"
   },
   "users": [
     {
@@ -151,6 +164,8 @@ cargo run
 #### 服务器配置
 - `listen`: 监听地址，通常设为 `0.0.0.0` 监听所有接口
 - `port`: 监听端口（建议使用 443 或 8443）
+- `protocol`: 协议类型（`tcp` 或 `ws`），默认 `tcp`
+- `ws_path`: WebSocket 路径（仅 `ws` 协议使用），默认 `/`
 
 #### 用户配置
 - `uuid`: 用户唯一标识符，必须是有效的UUID格式
