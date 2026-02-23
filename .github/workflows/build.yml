@@ -46,10 +46,10 @@ jobs:
         echo "$COMMITS"
         echo ""
 
-        # 从提交信息的第一行查找版本号（格式：x.x.x 或 x.x.x-xxxx）
-        # 只匹配行首的版本号，后面可以跟空格和描述内容
-        # 版本号格式：x.x.x，可选后缀 -xxxx（如 -alpha, -beta, -test 等）
-        VERSION_LINE=$(echo "$COMMITS" | grep -m 1 -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?' || echo "")
+        # 从提交信息中查找最新版本号（格式：x.x.x 或 x.x.x-xxxx）
+        # 查找最后一个匹配的版本号（最新版本），支持带后缀的版本号
+        # 版本号格式：x.x.x，可选后缀 -xxxx（如 -t, -alpha, -beta, -test 等）
+        VERSION_LINE=$(echo "$COMMITS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?( |$)' | tail -n 1 || echo "")
 
         if [ -n "$VERSION_LINE" ]; then
           # 提取完整版本号（包括后缀）

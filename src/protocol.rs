@@ -54,7 +54,7 @@ impl TryFrom<u8> for AddressType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Address {
     Ipv4(Ipv4Addr),
-    Domain(String),
+    Domain(Bytes),
     Ipv6(Ipv6Addr),
 }
 
@@ -83,7 +83,8 @@ impl Address {
                 if buf.len() < len {
                     return Err(anyhow!("Invalid domain length"));
                 }
-                let domain = String::from_utf8(buf.split_to(len).to_vec())?;
+                // 使用 Bytes 避免字符串复制
+                let domain = buf.split_to(len);
                 Ok(Address::Domain(domain))
             }
             AddressType::Ipv6 => {
@@ -116,7 +117,7 @@ pub struct VlessRequest {
     pub addons_length: u8,
     /// TODO: 实现附加数据处理
     #[allow(dead_code)]
-    pub addons: Vec<u8>,
+    pub addons: Bytes,
     pub command: Command,
     pub port: u16,
     pub address: Address,
@@ -146,14 +147,15 @@ impl VlessRequest {
         // Addons长度
         let addons_length = buf.get_u8();
         
-        // Addons数据
-        let mut addons = vec![0u8; addons_length as usize];
-        if addons_length > 0 {
+        // Addons数据（使用 Bytes 避免复制）
+        let addons = if addons_length > 0 {
             if buf.len() < addons_length as usize {
                 return Err(anyhow!("Invalid addons length"));
             }
-            buf.copy_to_slice(&mut addons);
-        }
+            buf.split_to(addons_length as usize)
+        } else {
+            Bytes::new()
+        };
 
         // 命令
         let command = Command::try_from(buf.get_u8())?;
@@ -183,7 +185,7 @@ impl VlessRequest {
 pub struct VlessResponse {
     pub version: u8,
     pub addons_length: u8,
-    pub addons: Vec<u8>,
+    pub addons: Bytes,
 }
 
 impl VlessResponse {
@@ -191,7 +193,7 @@ impl VlessResponse {
         Self {
             version,  // 使用客户端相同的版本号
             addons_length: 0,
-            addons: Vec::new(),
+            addons: Bytes::new(),
         }
     }
 

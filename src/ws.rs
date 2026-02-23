@@ -218,11 +218,12 @@ pub async fn handle_ws_proxy(
     // 解析目标地址
     let target_addr = match &request.address {
         Address::Domain(domain) => {
-            let addr_str = format!("{}:{}", domain, request.port);
+            let domain_str = std::str::from_utf8(domain).map_err(|_| anyhow!("Invalid domain encoding"))?;
+            let addr_str = format!("{}:{}", domain_str, request.port);
             let resolved = tokio::net::lookup_host(&addr_str)
                 .await?
                 .next()
-                .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
             resolved
         }
         _ => request.address.to_socket_addr(request.port)?,

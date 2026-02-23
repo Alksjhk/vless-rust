@@ -185,14 +185,16 @@ impl VlessServer {
             performance_config.tcp_nodelay,
         )?;
 
-        // 读取请求数据
-        let mut header_buf = vec![0u8; performance_config.buffer_size.min(4096)];
+        // 读取请求数据（使用 BufferPool 分配缓冲区）
+        let mut header_buf = buffer_pool.acquire();
         let n = stream.read(&mut header_buf).await?;
         if n == 0 {
             return Err(anyhow!("Connection closed by client (addr: {})", client_addr));
         }
 
-        let header_bytes = Bytes::from(header_buf[..n].to_vec());
+        // 截断未使用的部分并转换为 Bytes
+        header_buf.truncate(n);
+        let header_bytes = Bytes::from(header_buf.to_vec());
 
         // 检测HTTP请求 - 拒绝HTTP请求
         if is_http_request(&header_bytes) {
@@ -284,18 +286,15 @@ impl VlessServer {
         // 获取用户邮箱（在移动 request 之前）
         let user_email = config.get_user_email_arc(&request.uuid);
 
-        // 合并剩余数据到新缓冲区
-        let combined_data = remaining_data.to_vec();
-
         // 根据命令类型分发处理
         match request.command {
             Command::Tcp => {
-                // 处理 TCP 代理
+                // 处理 TCP 代理（直接使用 remaining_data，无需复制）
                 ws::handle_ws_proxy(
                     ws_sender,
                     ws_receiver,
                     request,
-                    Bytes::from(combined_data),
+                    remaining_data,
                     performance_config,
                     user_email,
                     buffer_pool,
@@ -328,11 +327,12 @@ impl VlessServer {
         // 连接到目标服务器
         let target_addr = match &request.address {
             Address::Domain(domain) => {
-                let addr_str = format!("{}:{}", domain, request.port);
+                let domain_str = std::str::from_utf8(domain).map_err(|_| anyhow!("Invalid domain encoding"))?;
+                let addr_str = format!("{}:{}", domain_str, request.port);
                 let resolved = tokio::net::lookup_host(&addr_str)
                     .await?
                     .next()
-                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
                 resolved
             }
             _ => request.address.to_socket_addr(request.port)?,
@@ -418,11 +418,12 @@ impl VlessServer {
         // 解析目标地址
         let target_addr = match &request.address {
             Address::Domain(domain) => {
-                let addr_str = format!("{}:{}", domain, request.port);
+                let domain_str = std::str::from_utf8(domain).map_err(|_| anyhow!("Invalid domain encoding"))?;
+                let addr_str = format!("{}:{}", domain_str, request.port);
                 let resolved = tokio::net::lookup_host(&addr_str)
                     .await?
                     .next()
-                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain))?;
+                    .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
                 resolved
             }
             _ => request.address.to_socket_addr(request.port)?,
@@ -446,10 +447,11 @@ impl VlessServer {
 
         let client_to_target = tokio::spawn(async move {
             let mut buffer = buffer_pool_c2t.acquire();
+            // 将 Duration 提取到循环外，避免每次迭代都创建新对象
+            let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
             loop {
                 // 超时检测
-                let timeout_duration = std::time::Duration::from_secs(udp_timeout);
                 let timeout_result = tokio::time::timeout(timeout_duration, client_read.read(&mut buffer)).await;
 
                 match timeout_result {
@@ -482,10 +484,11 @@ impl VlessServer {
 
         let target_to_client = tokio::spawn(async move {
             let mut buffer = buffer_pool_t2c.acquire();
+            // 将 Duration 提取到循环外，避免每次迭代都创建新对象
+            let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
             loop {
                 // 添加超时检测，防止客户端断开时任务永远阻塞
-                let timeout_duration = std::time::Duration::from_secs(udp_timeout);
                 let timeout_result = tokio::time::timeout(
                     timeout_duration,
                     udp_socket_t2c.recv_from(&mut buffer)
