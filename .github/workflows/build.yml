@@ -46,16 +46,15 @@ jobs:
         echo "$COMMITS"
         echo ""
 
-        # 从提交信息中查找版本号（格式：x.x.x 或 x.x.xx）
-        # 查找第一个匹配的版本号（只提取数字部分，不包括描述文字）
-        # 并提取版本号后面的内容作为 release 更新内容
-        VERSION_LINE=$(echo "$COMMITS" | grep -m 1 -E '^[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+        # 从提交信息的第一行查找版本号（格式：x.x.x 或 x.x.x-xxxx）
+        # 只匹配第一行，版本号后面可以跟 - 和任意字符（如 -alpha, -beta, -test 等）
+        VERSION_LINE=$(echo "$COMMITS" | grep -m 1 -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$' || echo "")
 
         if [ -n "$VERSION_LINE" ]; then
-          # 提取版本号
-          VERSION=$(echo "$VERSION_LINE" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          # 提取完整版本号（包括后缀）
+          VERSION=$(echo "$VERSION_LINE" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?')
           # 提取版本号后面的内容（去除空格）
-          RELEASE_BODY=$(echo "$VERSION_LINE" | sed 's/^[0-9]\+\.[0-9]\+\.[0-9]\+ *//')
+          RELEASE_BODY=$(echo "$VERSION_LINE" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)? ?//')
           echo "✓ Found version in commit: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
