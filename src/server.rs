@@ -1,7 +1,8 @@
 use crate::protocol::{VlessRequest, VlessResponse, Command, Address};
 use crate::http::is_http_request;
-use crate::config::PerformanceConfig;
+use crate::config::{PerformanceConfig, ProtocolType};
 use crate::buffer_pool::BufferPool;
+use crate::ws;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::collections::{HashSet, HashMap};
@@ -9,12 +10,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use futures_util::StreamExt;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use socket2::SockRef;
 
-/// 配置TCP socket选项
-fn configure_tcp_socket(
+/// 配置TCP socket选项（公开供 ws 模块使用）
+pub fn configure_tcp_socket(
     stream: &TcpStream,
     recv_buf: usize,
     send_buf: usize,
@@ -51,14 +53,18 @@ fn configure_tcp_socket(
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub bind_addr: SocketAddr,
+    pub protocol: ProtocolType,
+    pub ws_path: String,
     pub users: HashSet<Uuid>,
     pub user_emails: HashMap<Uuid, Option<Arc<str>>>,
 }
 
 impl ServerConfig {
-    pub fn new(bind_addr: SocketAddr) -> Self {
+    pub fn new(bind_addr: SocketAddr, protocol: ProtocolType, ws_path: String) -> Self {
         Self {
             bind_addr,
+            protocol,
+            ws_path,
             users: HashSet::new(),
             user_emails: HashMap::new(),
         }
@@ -132,7 +138,7 @@ impl VlessServer {
 
     /// 处理客户端连接
     async fn handle_connection(
-        mut stream: TcpStream,
+        stream: TcpStream,
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
         performance_config: PerformanceConfig,
@@ -140,6 +146,37 @@ impl VlessServer {
     ) -> Result<()> {
         debug!("New connection from {}", client_addr);
 
+        // 根据协议类型分发处理
+        match config.protocol {
+            ProtocolType::WebSocket => {
+                Self::handle_ws_connection(
+                    stream,
+                    client_addr,
+                    config,
+                    performance_config,
+                    buffer_pool,
+                ).await
+            }
+            ProtocolType::Tcp => {
+                Self::handle_tcp_connection(
+                    stream,
+                    client_addr,
+                    config,
+                    performance_config,
+                    buffer_pool,
+                ).await
+            }
+        }
+    }
+
+    /// 处理 TCP 协议连接
+    async fn handle_tcp_connection(
+        mut stream: TcpStream,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        performance_config: PerformanceConfig,
+        buffer_pool: BufferPool,
+    ) -> Result<()> {
         // 配置TCP socket参数
         configure_tcp_socket(
             &stream,
@@ -188,7 +225,7 @@ impl VlessServer {
             }
             Command::Udp => {
                 let user_email = config.get_user_email_arc(&request.uuid);
-                Self::handle_udp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool).await
+                Self::handle_udp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool.clone()).await
             }
             Command::Mux => {
                 warn!("Mux command not implemented yet");
@@ -197,6 +234,86 @@ impl VlessServer {
         };
 
         result
+    }
+
+    /// 处理 WebSocket 协议连接
+    async fn handle_ws_connection(
+        stream: TcpStream,
+        client_addr: SocketAddr,
+        config: Arc<ServerConfig>,
+        performance_config: PerformanceConfig,
+        buffer_pool: BufferPool,
+    ) -> Result<()> {
+        // 配置TCP socket参数
+        configure_tcp_socket(
+            &stream,
+            performance_config.tcp_recv_buffer,
+            performance_config.tcp_send_buffer,
+            performance_config.tcp_nodelay,
+        )?;
+
+        // 处理 WebSocket 升级
+        let (ws_stream, first_message) = ws::handle_ws_upgrade(
+            stream,
+            &config.ws_path,
+            performance_config.ws_header_buffer_size,
+        ).await?;
+
+        // 解析 VLESS 请求
+        let (request, remaining_data) = VlessRequest::decode(first_message)?;
+
+        debug!("Parsed VLESS request from WS: {:?}", request);
+
+        // 验证用户UUID
+        if !config.users.contains(&request.uuid) {
+            warn!("Invalid UUID from {}: {} (not in config)", client_addr, request.uuid);
+            return Err(anyhow!("Authentication failed: invalid user UUID (addr: {})", client_addr));
+        }
+
+        info!("Authenticated user {} from {} (WS)", request.uuid, client_addr);
+
+        // 创建 VLESS 响应并发送
+        let response = VlessResponse::new_with_version(request.version);
+
+        // 需要通过 WebSocket 发送响应
+        let (mut ws_sender, ws_receiver) = ws_stream.split();
+
+        // 发送响应
+        ws::send_ws_response(&mut ws_sender, &response).await?;
+
+        // 获取用户邮箱（在移动 request 之前）
+        let user_email = config.get_user_email_arc(&request.uuid);
+
+        // 合并剩余数据到新缓冲区
+        let combined_data = remaining_data.to_vec();
+
+        // 根据命令类型分发处理
+        match request.command {
+            Command::Tcp => {
+                // 处理 TCP 代理
+                ws::handle_ws_proxy(
+                    ws_sender,
+                    ws_receiver,
+                    request,
+                    Bytes::from(combined_data),
+                    performance_config,
+                    user_email,
+                    buffer_pool,
+                    client_addr,
+                ).await
+            }
+            Command::Udp => {
+                // 处理 UDP over WebSocket
+                warn!("UDP over WebSocket not fully implemented, falling back to TCP");
+                // UDP over WebSocket 需要更复杂的实现：每个 UDP 包需要独立处理
+                // 目前简化为返回错误
+                Err(anyhow!("UDP over WebSocket not supported yet"))
+            }
+            Command::Mux => {
+                warn!("Mux command not supported");
+                Err(anyhow!("Mux not supported"))
+            }
+        }
     }
 
     /// 处理TCP代理

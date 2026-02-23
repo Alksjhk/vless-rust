@@ -4,11 +4,13 @@ mod config;
 mod http;
 mod wizard;
 mod buffer_pool;
+mod ws;
 
 use anyhow::Result;
 use config::Config;
 use server::{ServerConfig, VlessServer};
 use std::env;
+use tokio::signal;
 use tracing::{info, error};
 
 // 使用 mimalloc 作为全局内存分配器，提升内存分配性能
@@ -62,13 +64,21 @@ async fn main() -> Result<()> {
 
     info!("Server configuration loaded:");
     info!("  Listen: {}:{}", config.server.listen, config.server.port);
+    info!("  Protocol: {:?}", config.server.protocol);
+    if config.server.protocol == config::ProtocolType::WebSocket {
+        info!("  WS Path: {}", config.server.ws_path);
+    }
     info!("  Users: {}", config.users.len());
 
     // 创建服务器配置
     let bind_addr = config.bind_addr()?;
 
     // 添加用户及邮箱信息
-    let mut server_config = ServerConfig::new(bind_addr);
+    let mut server_config = ServerConfig::new(
+        bind_addr,
+        config.server.protocol,
+        config.server.ws_path,
+    );
 
     for user in &config.users {
         if let Ok(uuid) = uuid::Uuid::parse_str(&user.uuid) {
@@ -83,10 +93,45 @@ async fn main() -> Result<()> {
     let server = VlessServer::new(server_config, performance_config);
 
     info!("Starting VLESS server...");
-    if let Err(e) = server.run().await {
-        error!("Server error: {}", e);
-        return Err(e);
+
+    // 创建优雅关闭信号处理器
+    let shutdown = async {
+        // 等待 SIGINT (Ctrl+C) 或 SIGTERM
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigint = signal(SignalKind::interrupt()).unwrap();
+            let mut sigterm = signal(SignalKind::terminate()).unwrap();
+            tokio::select! {
+                _ = sigint.recv() => {
+                    info!("Received SIGINT, initiating graceful shutdown...");
+                }
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, initiating graceful shutdown...");
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows: 只监听 Ctrl+C
+            let _ = signal::ctrl_c().await;
+            info!("Received Ctrl+C, initiating graceful shutdown...");
+        }
+    };
+
+    // 运行服务器直到收到关闭信号
+    tokio::select! {
+        result = server.run() => {
+            if let Err(e) = result {
+                error!("Server error: {}", e);
+                return Err(e);
+            }
+        }
+        _ = shutdown => {
+            info!("Shutting down server...");
+        }
     }
 
+    info!("Server stopped");
     Ok(())
 }

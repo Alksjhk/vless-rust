@@ -36,6 +36,7 @@ cargo check
 - `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
 - `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发
+- `src/ws.rs`: WebSocket 协议处理，支持 VLESS over WebSocket
 - `src/http.rs`: HTTP 请求检测（用于区分 HTTP 和 VLESS 请求）
 - `src/utils.rs`: 工具函数，VLESS URL 生成
 - `src/wizard.rs`: 配置向导，交互式生成配置文件
@@ -59,7 +60,9 @@ cargo check
 {
   "server": {
     "listen": "0.0.0.0",
-    "port": 8443
+    "port": 8443,
+    "protocol": "tcp",
+    "ws_path": "/vless"
   },
   "users": [
     {
@@ -74,7 +77,8 @@ cargo check
     "tcp_send_buffer": 262144,
     "udp_timeout": 30,
     "udp_recv_buffer": 65536,
-    "buffer_pool_size": 32
+    "buffer_pool_size": 32,
+    "ws_header_buffer_size": 8192
   }
 }
 ```
@@ -91,6 +95,7 @@ cargo check
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`handle_ws_proxy()` |
 | `src/http.rs` | HTTP 请求检测 | `is_http_request()` |
 | `src/utils.rs` | 工具函数、URL生成 | `generate_vless_url()` |
 | `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
@@ -122,6 +127,7 @@ cargo check
 - **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
 - **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
 - **HTTP 请求检测** → `src/http.rs:is_http_request()`
+- **WebSocket 处理** → `src/ws.rs`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 

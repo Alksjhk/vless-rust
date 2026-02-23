@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use anyhow::Result;
 
+/// 协议类型
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProtocolType {
+    /// TCP 直连模式
+    #[default]
+    Tcp,
+    /// WebSocket 模式
+    #[serde(rename = "ws")]
+    WebSocket,
+}
+
 /// 性能优化配置
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PerformanceConfig {
@@ -26,6 +38,9 @@ pub struct PerformanceConfig {
     /// 缓冲区池大小（缓冲区数量），默认 min(32, CPU核心数*4)
     #[serde(default = "default_buffer_pool_size")]
     pub buffer_pool_size: usize,
+    /// WebSocket HTTP 头缓冲区大小（字节），默认8KB
+    #[serde(default = "default_ws_header_buffer_size")]
+    pub ws_header_buffer_size: usize,
 }
 
 fn default_buffer_size() -> usize { 128 * 1024 }  // 128KB
@@ -37,6 +52,8 @@ fn default_udp_recv_buffer() -> usize { 64 * 1024 }  // 64KB
 fn default_buffer_pool_size() -> usize {
     std::cmp::min(32, std::thread::available_parallelism().map_or(4, |n| n.get() * 4))
 }
+fn default_ws_header_buffer_size() -> usize { 8 * 1024 }  // 8KB
+fn default_ws_path() -> String { "/vless".to_string() }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
@@ -48,6 +65,7 @@ impl Default for PerformanceConfig {
             udp_timeout: default_udp_timeout(),
             udp_recv_buffer: default_udp_recv_buffer(),
             buffer_pool_size: default_buffer_pool_size(),
+            ws_header_buffer_size: default_ws_header_buffer_size(),
         }
     }
 }
@@ -65,6 +83,12 @@ pub struct Config {
 pub struct ServerSettings {
     pub listen: String,
     pub port: u16,
+    /// 协议类型：tcp 或 ws，默认 tcp
+    #[serde(default)]
+    pub protocol: ProtocolType,
+    /// WebSocket 路径（仅 ws 模式使用），默认 "/"
+    #[serde(default = "default_ws_path")]
+    pub ws_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
