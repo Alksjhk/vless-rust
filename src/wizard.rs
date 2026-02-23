@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 use anyhow::Result;
-use crate::config::{Config, UserConfig, ServerSettings};
+use crate::config::{Config, UserConfig, ServerSettings, ProtocolType};
 use uuid::Uuid;
 
 /// 交互式配置向导
@@ -22,6 +22,9 @@ impl ConfigWizard {
         // 配置端口
         let port = Self::prompt_port()?;
 
+        // 配置协议类型
+        let (protocol, ws_path) = Self::prompt_protocol()?;
+
         // 配置用户
         let users = Self::prompt_users()?;
 
@@ -29,7 +32,7 @@ impl ConfigWizard {
 
         // 创建配置
         let config = Config {
-            server: ServerSettings { listen, port },
+            server: ServerSettings { listen, port, protocol, ws_path },
             users,
             performance: Default::default(),
         };
@@ -88,6 +91,67 @@ impl ConfigWizard {
                 Ok(port) if port > 0 => return Ok(port),
                 _ => println!("  ⚠ 无效的端口号，请输入 1-65535 之间的数字"),
             }
+        }
+    }
+
+    /// 提示配置协议类型
+    fn prompt_protocol() -> Result<(ProtocolType, String)> {
+        println!("\n【传输协议类型】");
+        println!("  选择服务器使用的传输协议类型。");
+        println!("  • TCP - 原始 VLESS over TCP（推荐）");
+        println!("  • WS  - VLESS over WebSocket（可穿透防火墙）");
+
+        loop {
+            print!("  请选择协议类型 [1]TCP / [2]WS [默认: 1]: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+
+            if input.is_empty() || input == "1" {
+                return Ok((ProtocolType::Tcp, "/".to_string()));
+            } else if input == "2" {
+                let ws_path = Self::prompt_ws_path()?;
+                return Ok((ProtocolType::WebSocket, ws_path));
+            } else {
+                println!("  ⚠ 无效选择，请输入 1 或 2");
+            }
+        }
+    }
+
+    /// 提示配置 WebSocket 路径
+    fn prompt_ws_path() -> Result<String> {
+        println!("\n【WebSocket 路径】");
+        println!("  WebSocket 路径用于客户端连接识别。");
+        println!("  示例：/vless, /ws, /proxy");
+
+        loop {
+            print!("  请输入 WebSocket 路径 [默认: /vless]: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+
+            let path = if input.is_empty() {
+                "/vless".to_string()
+            } else {
+                input.to_string()
+            };
+
+            // 验证路径格式
+            if !path.starts_with('/') {
+                println!("  ⚠ 路径必须以 / 开头");
+                continue;
+            }
+
+            if path.contains("..") || path.contains('\\') {
+                println!("  ⚠ 路径包含非法字符");
+                continue;
+            }
+
+            return Ok(path);
         }
     }
 

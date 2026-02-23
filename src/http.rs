@@ -19,4 +19,5 @@ pub fn is_http_request(data: &[u8]) -> bool {
     // HTTP/1.x 方法
     let prefix = &data[..4];
     matches!(prefix, b"GET " | b"POST" | b"HEAD" | b"PUT " | b"DELE" | b"OPTI" | b"PATC" | b"CONN" | b"TRAC")
+        || (data.len() >= 4 && &data[..4] == b"POST")
 }

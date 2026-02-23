@@ -9,12 +9,15 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 ### 后端
 
 - **语言**: Rust 2021 Edition
-- **异步运行时**: Tokio 1.0 (精简 features: rt-multi-thread, io-util, net, time, sync, macros)
+- **异步运行时**: Tokio 1.0 (精简 features: rt-multi-thread, io-util, net, time, sync, macros, signal)
 - **内存分配器**: mimalloc (高性能分配器)
 - **协议**: VLESS (版本 0 和版本 1)
 - **序列化**: serde + serde_json
 - **日志**: tracing + tracing-subscriber
-- **SHA1**: sha1 (VLESS 协议需要)
+- **SHA1**: sha1_smol (VLESS 协议需要)
+- **WebSocket**: tokio-tungstenite + futures-util
+- **Base64**: base64 (WebSocket 认证)
+- **URL编码**: urlencoding
 - **Socket 配置**: socket2
 
 ## 架构设计
@@ -61,6 +64,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`handle_ws_proxy()` - WebSocket 握手和代理转发 |
 | `src/http.rs` | HTTP 请求检测 | `is_http_request()` - 区分 HTTP 和 VLESS 请求 |
 | `src/buffer_pool.rs` | 缓冲区池实现 | `BufferPool`、`acquire()` - 对象池复用缓冲区 |
 | `src/utils.rs` | 工具函数、URL 生成 | `generate_vless_url()` - 生成 VLESS 协议 URL |
@@ -93,6 +97,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
 - **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
 - **HTTP 请求检测** → `src/http.rs:is_http_request()`
+- **WebSocket 处理** → `src/ws.rs`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
@@ -169,6 +174,8 @@ if is_http_request(&header_bytes) {
 - `server`: 服务器监听配置
   - `listen`: 监听地址
   - `port`: 监听端口
+  - `protocol`: 协议类型 (tcp/ws)，默认 tcp
+  - `ws_path`: WebSocket 路径，仅 ws 模式使用，默认 "/vless"
 - `users`: 用户 UUID 列表
   - `uuid`: 用户唯一标识符
   - `email`: 用户邮箱（可选）
@@ -180,6 +187,7 @@ if is_http_request(&header_bytes) {
   - `udp_timeout`: UDP 会话超时（默认 30 秒）
   - `udp_recv_buffer`: UDP 接收缓冲区（默认 64KB）
   - `buffer_pool_size`: 缓冲区池大小（默认 min(32, CPU核心数*4)）
+  - `ws_header_buffer_size`: WebSocket HTTP 头缓冲区（默认 8KB）
 
 **默认值策略**:
 - 使用 serde 默认值
@@ -211,6 +219,40 @@ if is_http_request(&header_bytes) {
 - 拒绝无效格式（`@example.com`, `user@`, `user@.`）
 - 友好的警告提示
 
+#### 7. WebSocket 模块 (ws.rs)
+
+**职责**: WebSocket 协议处理，支持 VLESS over WebSocket
+
+**核心功能**:
+
+**WebSocket 握手升级**:
+- 解析 HTTP Upgrade 请求
+- 验证 WebSocket 路径
+- 生成 Sec-WebSocket-Accept 响应
+- 完成协议切换
+
+**WebSocket 代理转发**:
+- 处理 WebSocket 帧的收发
+- 支持二进制数据帧
+- 复用 TCP 代理逻辑
+
+**配置参数**:
+- `ws_path`: WebSocket 路径（默认 "/vless"）
+- `ws_header_buffer_size`: HTTP 头缓冲区（默认 8KB）
+
+**协议流程**:
+```
+客户端 → HTTP GET /vless Upgrade: websocket
+    ↓
+服务器验证路径和请求
+    ↓
+Sec-WebSocket-Accept 响应
+    ↓
+WebSocket 帧传输
+    ↓
+VLESS 协议处理
+```
+
 ## 数据流
 
 ### VLESS 代理流程
@@ -231,6 +273,22 @@ UUID 验证
     └─ 目标 → 客户端 (下载)
     ↓
 连接关闭，清理资源
+```
+
+### WebSocket 代理流程
+
+```
+客户端连接 (HTTP Upgrade)
+    ↓
+WebSocket 握手
+    ↓
+协议检测 (TCP vs WebSocket)
+    ↓
+WebSocket 帧处理
+    ↓
+VLESS 协议解析
+    ↓
+后续流程同 TCP 模式
 ```
 
 ### 配置加载流程
@@ -286,6 +344,13 @@ UUID 验证
    - 复用 128KB 缓冲区，减少内存分配 95%
    - 支持可配置的池大小（默认 min(32, CPU核心数*4)）
    - 1000 连接场景内存占用减少 80% (128MB → 25MB)
+
+8. **优雅关闭**:
+   - 支持 SIGINT/SIGTERM 信号处理
+   - Windows: Ctrl+C 监听
+   - Unix: SIGINT 和 SIGTERM 处理
+   - 停止接收新连接
+   - 等待现有连接完成
 
 ## 安全考虑
 
