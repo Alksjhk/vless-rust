@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- 抽象几何风 - 艺术化设计 -->
+  <defs>
+    <clipPath id="hexClip">
+      <polygon points="128,20 220,70 220,186 128,236 36,186 36,70"/>
+    </clipPath>
+    <linearGradient id="geoGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="100%" stop-color="#feca57"/>
+    </linearGradient>
+    <linearGradient id="geoGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#48dbfb"/>
+      <stop offset="100%" stop-color="#ff9ff3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 白色背景 -->
+  <rect width="256" height="256" rx="56" fill="#ffffff"/>
+
+  <!-- 六边形框架 -->
+  <polygon points="128,25 215,72 215,184 128,231 41,184 41,72"
+           fill="none"
+           stroke="url(#geoGrad1)"
+           stroke-width="4"
+           opacity="0.8"/>
+
+  <!-- 内部几何装饰 -->
+  <polygon points="128,50 190,85 190,171 128,206 66,171 66,85"
+           fill="url(#geoGrad2)"
+           opacity="0.15"/>
+
+  <!-- 斜体V字母 -->
+  <g transform="translate(128, 128)">
+    <path d="M -60 -48
+             L -24 -48
+             L 0 20
+             L 24 -48
+             L 60 -48
+             L 16 58
+             L -16 58
+             Z"
+          fill="url(#geoGrad1)"
+          transform="skewX(-8)"/>
+  </g>
+
+  <!-- 几何点缀 -->
+  <circle cx="128" cy="55" r="4" fill="#ff6b6b"/>
+  <circle cx="128" cy="201" r="4" fill="#feca57"/>
+  <polygon points="55,88 60,80 65,88 60,96" fill="#48dbfb" opacity="0.6"/>
+  <polygon points="191,88 196,80 201,88 196,96" fill="#48dbfb" opacity="0.6"/>
+</svg>

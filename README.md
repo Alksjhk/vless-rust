@@ -11,6 +11,7 @@
 - 可配置缓冲区（默认 128KB）
 - 缓冲区池复用
 - TCP_NODELAY 优化
+- TUI 终端日志界面
 
 ## 快速开始
 
@@ -28,6 +29,11 @@ cargo run
 
 # 指定配置文件
 ./target/release/vless.exe config.json
+
+# 禁用 TUI（使用传统日志输出）
+./target/release/vless.exe --no-tui
+# 或
+DISABLE_TUI=1 ./target/release/vless.exe
 ```
 
 ### 客户端配置

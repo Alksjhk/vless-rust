@@ -7,10 +7,17 @@ vless.exe
 vless-debug
 vless-debug.exe
 
+# Windows resource files
+*.lib
+*.a
+
 plan.md
 .vscode
 
 .claude
 .trea
 .opencode
+
+# 编译时生成的版本信息文件
+src/version_info.rs
 

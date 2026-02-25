@@ -71,7 +71,7 @@ impl Default for PerformanceConfig {
 }
 
 /// 服务器配置文件格式
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub server: ServerSettings,
     pub users: Vec<UserConfig>,
@@ -79,7 +79,7 @@ pub struct Config {
     pub performance: PerformanceConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerSettings {
     pub listen: String,
     pub port: u16,
@@ -91,7 +91,7 @@ pub struct ServerSettings {
     pub ws_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserConfig {
     pub uuid: String,
     pub email: Option<String>,

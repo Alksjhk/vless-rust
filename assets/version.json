@@ -1,0 +1,8 @@
+{
+  "version": "1.6.7",
+  "product_name": "VLESS Rust Server",
+  "author":"HuY",
+  "file_description": "High-performance VLESS protocol server",
+  "company_name": "VLESS-Rust Project",
+  "legal_copyright": "Copyright (C) 2025"
+}

@@ -60,7 +60,8 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器、配置向导触发 |
+| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器、配置向导触发、TUI 日志显示 |
+| `src/tui.rs` | TUI 模块 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
@@ -351,6 +352,18 @@ VLESS 协议解析
    - Unix: SIGINT 和 SIGTERM 处理
    - 停止接收新连接
    - 等待现有连接完成
+
+9. **TUI 日志显示**:
+   - 固定头部显示服务器状态信息
+   - 可滚动的日志区域（最多 1000 条）
+   - 自动滚动模式（新日志自动显示在底部）
+   - 用户手动滚动时自动禁用自动滚动
+   - 按键控制：
+     - `q`/`Esc`: 退出
+     - `↑`/`↓` 或 `k`/`j`: 上下滚动
+     - `Page Up`/`Page Down`: 快速翻页
+     - `Home`: 跳转到顶部
+     - `End`: 跳转到底部并重新启用自动滚动
 
 ## 安全考虑
 

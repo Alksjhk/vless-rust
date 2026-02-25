@@ -1,18 +1,24 @@
 {
-  "performance": {
-    "buffer_size": 131072,
-    "tcp_nodelay": true,
-    "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144
-  },
   "server": {
     "listen": "0.0.0.0",
-    "port": 8443
+    "port": 443,
+    "protocol": "tcp",
+    "ws_path": "/"
   },
   "users": [
     {
-      "email": "user1@example.com",
-      "uuid": "615767da-4db9-4df7-9f12-d7d617fc1d96"
+      "uuid": "7fa8b8a5-e2d4-44dc-b3b4-0b72f04397d8",
+      "email": "user1@a.com"
     }
-  ]
+  ],
+  "performance": {
+    "buffer_size": 131072,
+    "tcp_recv_buffer": 262144,
+    "tcp_send_buffer": 262144,
+    "tcp_nodelay": true,
+    "udp_timeout": 30,
+    "udp_recv_buffer": 65536,
+    "buffer_pool_size": 32,
+    "ws_header_buffer_size": 8192
+  }
 }

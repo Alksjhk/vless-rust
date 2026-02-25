@@ -22,9 +22,28 @@ cargo run
 # 运行服务器（指定配置文件）
 cargo run -- /path/to/config.json
 
+# 禁用 TUI（使用传统日志输出）
+cargo run -- --no-tui
+# 或设置环境变量
+DISABLE_TUI=1 cargo run
+
 # 检查代码（不编译）
 cargo check
 ```
+
+### TUI 控制说明
+
+服务器默认启用 TUI 终端界面，提供以下交互功能：
+- **按键控制**：
+  - `q` / `Esc`: 退出程序
+  - `↑` / `↓` 或 `k` / `j`: 上下滚动日志
+  - `Page Up` / `Page Down`: 快速翻页
+  - `Home`: 跳转到顶部
+  - `End`: 跳转到底部并重新启用自动滚动
+
+- **禁用 TUI**：
+  - 使用命令行参数: `--no-tui`
+  - 设置环境变量: `DISABLE_TUI=1`
 
 ## 架构设计
 
@@ -32,7 +51,7 @@ cargo check
 
 **后端核心模块：**
 
-- `src/main.rs`: 程序入口，负责配置加载和服务器启动
+- `src/main.rs`: 程序入口，负责配置加载、服务器启动和 TUI 控制
 - `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
 - `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发
@@ -41,6 +60,8 @@ cargo check
 - `src/utils.rs`: 工具函数，VLESS URL 生成
 - `src/wizard.rs`: 配置向导，交互式生成配置文件
 - `src/buffer_pool.rs`: 缓冲区池，复用缓冲区减少内存分配
+- `src/tui.rs`: TUI 终端界面，日志显示和交互控制
+- `src/version.rs`: 版本信息管理
 
 ### 关键设计模式
 
@@ -91,8 +112,10 @@ cargo check
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器 |
-| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
+| `src/main.rs` | 程序入口、服务器启动、TUI控制 | `main()` - 加载配置、启动服务器、TUI日志显示 |
+| `src/tui.rs` | TUI 终端界面 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
+| `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
+| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerSettings`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
 | `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
 | `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`handle_ws_proxy()` |
