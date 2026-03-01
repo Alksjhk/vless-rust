@@ -3,7 +3,6 @@ mod server;
 mod config;
 mod http;
 mod wizard;
-mod buffer_pool;
 mod ws;
 mod version;
 mod tui;

@@ -1,12 +1,11 @@
 use crate::protocol::{VlessRequest, VlessResponse, Address};
 use crate::config::PerformanceConfig;
-use crate::buffer_pool::BufferPool;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::{TcpStream, tcp::OwnedWriteHalf};
+use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::{SplitSink, SplitStream};
@@ -208,7 +207,6 @@ pub async fn handle_ws_proxy(
     initial_data: Bytes,
     perf_config: PerformanceConfig,
     _user_email: Option<Arc<str>>,
-    buffer_pool: BufferPool,
     client_addr: SocketAddr,
 ) -> Result<()> {
     use crate::server::configure_tcp_socket;
@@ -251,36 +249,13 @@ pub async fn handle_ws_proxy(
     // 创建目标流的读写 halves
     let (mut target_read, mut target_write) = target_stream.into_split();
 
-    // 为两个任务分别创建缓冲区池副本
-    let buffer_pool_w2t = buffer_pool.clone();
-    let buffer_pool_t2w = buffer_pool;
-
-    // 辅助函数：将数据通过缓冲区分块转发到目标
-    async fn forward_to_target(
-        target_write: &mut OwnedWriteHalf,
-        buffer: &mut [u8],
-        data: &[u8],
-    ) -> bool {
-        let mut offset = 0;
-        while offset < data.len() {
-            let chunk_size = std::cmp::min(buffer.len(), data.len() - offset);
-            buffer[..chunk_size].copy_from_slice(&data[offset..offset + chunk_size]);
-            if target_write.write_all(&buffer[..chunk_size]).await.is_err() {
-                return false;
-            }
-            offset += chunk_size;
-        }
-        true
-    }
-
-    // 任务1：WebSocket -> 目标（使用缓冲区池）
+    // 任务1：WebSocket -> 目标（直接转发，避免不必要的拷贝）
     let ws_to_target = tokio::spawn(async move {
-        let mut buffer = buffer_pool_w2t.acquire();
-
         loop {
             match ws_receiver.next().await {
                 Some(Ok(Message::Binary(data))) => {
-                    if !forward_to_target(&mut target_write, &mut buffer, &data).await {
+                    // 直接写入，避免通过缓冲区拷贝
+                    if target_write.write_all(&data).await.is_err() {
                         break;
                     }
                 }
@@ -288,7 +263,7 @@ pub async fn handle_ws_proxy(
                     // 只接受 Base64 编码的二进制数据
                     match BASE64.decode(&text) {
                         Ok(data) => {
-                            if !forward_to_target(&mut target_write, &mut buffer, &data).await {
+                            if target_write.write_all(&data).await.is_err() {
                                 break;
                             }
                         }
@@ -308,35 +283,32 @@ pub async fn handle_ws_proxy(
                 _ => {}
             }
         }
-
-        // 释放缓冲区
-        drop(buffer);
         // 关闭目标连接
         let _ = target_write.shutdown().await;
     });
 
-    // 任务2：目标 -> WebSocket（使用缓冲区池）
+    // 任务2：目标 -> WebSocket（使用优化的缓冲区大小）
+    // 对于小数据包（<500KB），使用 8KB 缓冲区比 128KB 更高效
     let target_to_ws = tokio::spawn(async move {
-        let mut buffer = buffer_pool_t2w.acquire();
+        // 使用较小的栈缓冲区，避免堆分配
+        let mut buffer = [0u8; 8 * 1024];
 
         loop {
-            match target_read.read(&mut buffer[..]).await {
+            match target_read.read(&mut buffer).await {
                 Ok(0) => {
                     debug!("Target connection closed");
                     break;
                 }
                 Ok(n) => {
-                    // 发送二进制消息
-                    if ws_sender.send(Message::Binary(buffer[..n].to_vec())).await.is_err() {
+                    // 创建 Vec 所有权供 WebSocket 消息使用
+                    let data = buffer[..n].to_vec();
+                    if ws_sender.send(Message::Binary(data)).await.is_err() {
                         break;
                     }
                 }
                 Err(_) => break,
             }
         }
-
-        // 释放缓冲区
-        drop(buffer);
         // 发送 WebSocket 关闭帧
         let _ = ws_sender.send(Message::Close(None)).await;
     });

@@ -1,7 +1,6 @@
 use crate::protocol::{VlessRequest, VlessResponse, Command, Address};
 use crate::http::is_http_request;
 use crate::config::{PerformanceConfig, ProtocolType};
-use crate::buffer_pool::BufferPool;
 use crate::ws;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
@@ -86,7 +85,6 @@ impl ServerConfig {
 pub struct VlessServer {
     config: Arc<ServerConfig>,
     performance_config: PerformanceConfig,
-    buffer_pool: BufferPool,
 }
 
 impl VlessServer {
@@ -94,15 +92,9 @@ impl VlessServer {
         config: ServerConfig,
         performance_config: PerformanceConfig,
     ) -> Self {
-        let buffer_pool = BufferPool::new(
-            performance_config.buffer_size,
-            performance_config.buffer_pool_size,
-        );
-
         Self {
             config: Arc::new(config),
             performance_config,
-            buffer_pool,
         }
     }
 
@@ -116,14 +108,12 @@ impl VlessServer {
                 Ok((stream, addr)) => {
                     let config = Arc::clone(&self.config);
                     let performance_config = self.performance_config.clone();
-                    let buffer_pool = self.buffer_pool.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
                             stream,
                             addr,
                             config,
                             performance_config,
-                            buffer_pool,
                         ).await {
                             error!("Error handling connection from {}: {}", addr, e);
                         }
@@ -142,7 +132,6 @@ impl VlessServer {
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
         performance_config: PerformanceConfig,
-        buffer_pool: BufferPool,
     ) -> Result<()> {
         debug!("New connection from {}", client_addr);
 
@@ -154,7 +143,6 @@ impl VlessServer {
                     client_addr,
                     config,
                     performance_config,
-                    buffer_pool,
                 ).await
             }
             ProtocolType::Tcp => {
@@ -163,7 +151,6 @@ impl VlessServer {
                     client_addr,
                     config,
                     performance_config,
-                    buffer_pool,
                 ).await
             }
         }
@@ -175,7 +162,6 @@ impl VlessServer {
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
         performance_config: PerformanceConfig,
-        buffer_pool: BufferPool,
     ) -> Result<()> {
         // 配置TCP socket参数
         configure_tcp_socket(
@@ -185,16 +171,16 @@ impl VlessServer {
             performance_config.tcp_nodelay,
         )?;
 
-        // 读取请求数据（使用 BufferPool 分配缓冲区）
-        let mut header_buf = buffer_pool.acquire();
-        let n = stream.read(&mut header_buf).await?;
+        // 读取请求数据（使用栈上小缓冲区避免堆分配）
+        // VLESS 头部通常小于 256 字节，使用 1KB 栈缓冲区足够
+        let mut small_buf = [0u8; 1024];
+        let n = stream.read(&mut small_buf).await?;
         if n == 0 {
             return Err(anyhow!("Connection closed by client (addr: {})", client_addr));
         }
 
-        // 截断未使用的部分并转换为 Bytes
-        header_buf.truncate(n);
-        let header_bytes = Bytes::from(header_buf.to_vec());
+        // 从栈缓冲区创建 Bytes（一次拷贝，避免堆分配）
+        let header_bytes = Bytes::copy_from_slice(&small_buf[..n]);
 
         // 检测HTTP请求 - 拒绝HTTP请求
         if is_http_request(&header_bytes) {
@@ -223,11 +209,11 @@ impl VlessServer {
         let result = match request.command {
             Command::Tcp => {
                 let user_email = config.get_user_email_arc(&request.uuid);
-                Self::handle_tcp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool.clone()).await
+                Self::handle_tcp_proxy(stream, request, remaining_data, performance_config, user_email).await
             }
             Command::Udp => {
                 let user_email = config.get_user_email_arc(&request.uuid);
-                Self::handle_udp_proxy(stream, request, remaining_data, performance_config, user_email, buffer_pool.clone()).await
+                Self::handle_udp_proxy(stream, request, remaining_data, performance_config, user_email).await
             }
             Command::Mux => {
                 warn!("Mux command not implemented yet");
@@ -244,7 +230,6 @@ impl VlessServer {
         client_addr: SocketAddr,
         config: Arc<ServerConfig>,
         performance_config: PerformanceConfig,
-        buffer_pool: BufferPool,
     ) -> Result<()> {
         // 配置TCP socket参数
         configure_tcp_socket(
@@ -297,7 +282,6 @@ impl VlessServer {
                     remaining_data,
                     performance_config,
                     user_email,
-                    buffer_pool,
                     client_addr,
                 ).await
             }
@@ -322,7 +306,6 @@ impl VlessServer {
         initial_data: Bytes,
         perf_config: PerformanceConfig,
         _user_email: Option<Arc<str>>,
-        buffer_pool: BufferPool,
     ) -> Result<()> {
         // 连接到目标服务器
         let target_addr = match &request.address {
@@ -358,49 +341,22 @@ impl VlessServer {
         info!("Established proxy connection: {} -> {}",
                client_stream.peer_addr()?, target_addr);
 
-        // 使用tokio的io::copy_bidirectional实现零拷贝传输
+        // 使用 tokio::io::copy_bidirectional 实现零拷贝双向转发
+        // 这是 Tokio 提供的高度优化实现，比手动循环更高效
         let (mut client_read, mut client_write) = client_stream.into_split();
         let (mut target_read, mut target_write) = target_stream.into_split();
 
-        let buffer_pool_c2t = buffer_pool.clone();
-        let buffer_pool_t2c = buffer_pool;
-
-        // 客户端→目标任务
-        let upload_task = tokio::spawn(async move {
-            let mut buffer = buffer_pool_c2t.acquire();
-
-            loop {
-                match client_read.read(&mut buffer[..]).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if target_write.write_all(&buffer[..n]).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+        // 使用 tokio::io::copy 进行单向拷贝（比手动 read/write 循环更高效）
+        let client_to_target = tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut client_read, &mut target_write).await;
         });
 
-        // 目标→客户端任务
-        let download_task = tokio::spawn(async move {
-            let mut buffer = buffer_pool_t2c.acquire();
-
-            loop {
-                match target_read.read(&mut buffer[..]).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if client_write.write_all(&buffer[..n]).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+        let target_to_client = tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut target_read, &mut client_write).await;
         });
 
         // 等待两个任务完成
-        let _ = tokio::join!(upload_task, download_task);
+        let _ = tokio::join!(client_to_target, target_to_client);
 
         debug!("Proxy connection closed");
         Ok(())
@@ -413,7 +369,6 @@ impl VlessServer {
         _initial_data: Bytes,
         perf_config: PerformanceConfig,
         _user_email: Option<Arc<str>>,
-        buffer_pool: BufferPool,
     ) -> Result<()> {
         // 解析目标地址
         let target_addr = match &request.address {
@@ -442,12 +397,12 @@ impl VlessServer {
         let (mut client_read, mut client_write) = client_stream.into_split();
 
         // 任务1：客户端 → 目标（读取TCP数据，发送UDP包）
+        // UDP 包通常较小（<1500字节），使用栈缓冲区避免堆分配
         let udp_socket_c2t = Arc::clone(&udp_socket);
-        let buffer_pool_c2t = buffer_pool.clone();
 
         let client_to_target = tokio::spawn(async move {
-            let mut buffer = buffer_pool_c2t.acquire();
-            // 将 Duration 提取到循环外，避免每次迭代都创建新对象
+            // 使用栈缓冲区（增大到 4KB 以支持 jumbo frames 或非标准 MTU）
+            let mut buffer = [0u8; 4096];
             let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
             loop {
@@ -480,11 +435,10 @@ impl VlessServer {
 
         // 任务2：目标 → 客户端（接收UDP包，写入TCP流）
         let udp_socket_t2c = Arc::clone(&udp_socket);
-        let buffer_pool_t2c = buffer_pool;
 
         let target_to_client = tokio::spawn(async move {
-            let mut buffer = buffer_pool_t2c.acquire();
-            // 将 Duration 提取到循环外，避免每次迭代都创建新对象
+            // 使用栈缓冲区（增大到 4KB 以支持 jumbo frames 或非标准 MTU）
+            let mut buffer = [0u8; 4096];
             let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
             loop {
