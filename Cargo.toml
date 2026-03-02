@@ -1,6 +1,6 @@
 [package]
 name = "vless-rust"
-version = "1.6.8"
+version = "1.6.9"
 edition = "2021"
 default-run = "vless"
 
@@ -30,6 +30,8 @@ urlencoding = "2.1"
 ratatui = "0.28"
 crossterm = "0.28"
 chrono = "0.4"
+# HTTP 客户端（用于获取公网 IP）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.52", features = [

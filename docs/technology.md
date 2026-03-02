@@ -43,15 +43,23 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
      ┌────────┴────────┐
      │                 │
      ▼                 ▼
-┌─────────┐      ┌──────────────┐
-│ HTTP    │      │ VLESS 请求   │
-│ 请求    │      │              │
-│ (拒绝)  │      ├──────────────┤
-└─────────┘      │ UUID 验证    │
-                 │ 命令处理     │
-                 │ TCP 代理     │
-                 │ UDP 代理     │
-                 └──────────────┘
+┌─────────┐      ┌──────────────────┐
+│ HTTP    │      │ HTTP 升级请求    │
+│ 请求    │      │ (WebSocket)      │
+├─────────┤      └────────┬─────────┘
+│ API     │               │
+│ 信息页  │               ▼
+│ 链接生成│      ┌──────────────────┐
+└─────────┘      │ WebSocket 握手   │
+                 └────────┬─────────┘
+                          ▼
+                 ┌──────────────────┐
+                 │  VLESS 请求      │
+                 ├──────────────────┤
+                 │ UUID 验证        │
+                 │ 命令处理         │
+                 │ TCP/UDP 代理     │
+                 └──────────────────┘
 ```
 
 ## 文件与功能映射关系
@@ -62,11 +70,17 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 |---------|---------|---------------|
 | `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器、配置向导触发、TUI 日志显示 |
 | `src/tui.rs` | TUI 模块 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
+| `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
-| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`handle_ws_proxy()` - WebSocket 握手和代理转发 |
-| `src/http.rs` | HTTP 请求检测 | `is_http_request()` - 区分 HTTP 和 VLESS 请求 |
+| `src/server.rs` | 服务器调度器 | `VlessServer`、`handle_connection()` - 协议分发调度 |
+| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`is_websocket_upgrade()` |
+| `src/http.rs` | HTTP 请求检测和响应构建 | `is_http_request()`、`parse_http_request()`、`build_json_response()` |
+| `src/tcp.rs` | TCP 协议处理 | `handle_tcp_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/socket.rs` | TCP Socket 配置 | `configure_tcp_socket()` |
+| `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和链接生成 |
+| `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
+| `src/vless_link.rs` | VLESS 链接生成 | `generate_vless_links()` - 生成 TCP/WS 链接 |
 | `src/buffer_pool.rs` | 缓冲区池实现 | `BufferPool`、`acquire()` - 对象池复用缓冲区 |
 | `src/utils.rs` | 工具函数、URL 生成 | `generate_vless_url()` - 生成 VLESS 协议 URL |
 | `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()` - 引导用户创建配置 |
@@ -94,11 +108,15 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **首次配置向导** → `src/wizard.rs:ConfigWizard::run()`
 - **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`
 - **VLESS 协议解析** → `src/protocol.rs:VlessRequest::decode()`
-- **用户认证逻辑** → `src/server.rs:handle_connection()`
-- **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
-- **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
+- **连接分发调度** → `src/server.rs:handle_connection()` - 根据协议类型分发
+- **TCP 代理转发** → `src/tcp.rs:handle_tcp_proxy()`
+- **UDP 代理转发** → `src/tcp.rs:handle_udp_proxy()`
 - **HTTP 请求检测** → `src/http.rs:is_http_request()`
+- **HTTP API 处理** → `src/api.rs:handle_http_request()` - 信息页面和链接生成
+- **公网 IP 获取** → `src/public_ip.rs:fetch_public_ip_with_timeout()`
+- **VLESS 链接生成** → `src/vless_link.rs:generate_vless_links()`
 - **WebSocket 处理** → `src/ws.rs`
+- **Socket 配置** → `src/socket.rs:configure_tcp_socket()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
@@ -135,39 +153,132 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 
 #### 2. 服务器模块 (server.rs)
 
-**职责**: 核心服务器逻辑，连接处理和代理转发
+**职责**: 服务器调度器，连接分发和处理
 
-**关键功能**:
+**核心功能**:
 
-**协议检测**:
+**协议分发**:
 ```rust
 if is_http_request(&header_bytes) {
-    // HTTP 请求 - 拒绝处理
+    // HTTP 请求 → API 处理或 WebSocket 握手
+    handle_http_request(...).await
 } else {
-    // VLESS 请求处理路径
+    // VLESS 请求 → TCP 模块处理
+    handle_tcp_connection(...).await
 }
 ```
 
-**TCP 代理转发**:
-- 使用 `tokio::select!` 同时监听双向数据流
-- 任一方向关闭时，整个代理连接终止
-- 可配置缓冲区大小 (默认 128KB)
+**WebSocket 升级检测**:
+- 检测 HTTP 请求是否为 WebSocket 升级请求
+- 使用 `is_websocket_upgrade()` 验证
+- 验证路径是否匹配配置的 ws_path
 
-**性能优化**:
-- TCP_NODELAY 启用 (降低延迟)
-- 大缓冲区适配千兆网络
-- 缓冲区池减少内存分配
+**模块协作**:
+- TCP 请求 → `src/tcp.rs`
+- WebSocket 请求 → `src/ws.rs`
+- HTTP API 请求 → `src/api.rs`
+
+**关键结构**:
+```rust
+pub struct ServerConfig {
+    pub bind_addr: SocketAddr,
+    pub protocol: ProtocolType,
+    pub ws_path: String,
+    pub users: HashSet<Uuid>,
+    pub user_emails: HashMap<Uuid, Option<Arc<str>>>,
+    pub public_ip: Option<String>,  // 用于生成 VLESS 链接
+    pub port: u16,
+}
+```
 
 #### 3. HTTP 检测模块 (http.rs)
 
-**职责**: HTTP 请求检测，区分 HTTP 和 VLESS 协议
+**职责**: HTTP 请求检测和响应构建，区分 HTTP 和 VLESS 协议
 
 **检测机制**:
 - 检查数据包前缀是否为 HTTP 方法
 - 支持 GET、POST、PUT、DELETE、HEAD、OPTIONS、PATCH、TRACE
 - HTTP 请求会被拒绝，仅处理 VLESS 协议
 
-#### 4. 配置模块 (config.rs)
+**HTTP 响应构建**:
+- `parse_http_request()`: 解析 HTTP 请求路径和参数
+- `build_json_response()`: 构建 JSON 响应
+- `build_html_response()`: 构建 HTML 响应
+- `build_404_response()` / `build_400_response()`: 错误响应
+
+#### 4. TCP 处理模块 (tcp.rs)
+
+**职责**: TCP 协议处理，包含 TCP/UDP 代理转发
+
+**核心功能**:
+- `handle_tcp_connection()`: 处理 TCP 连接，解析 VLESS 请求，验证 UUID
+- `handle_tcp_proxy()`: TCP 代理转发，双向数据流复制
+- `handle_udp_proxy()`: UDP over TCP 代理，UDP 数据包封装传输
+
+**技术细节**:
+- 使用 `tokio::io::copy` 进行高效双向复制
+- 4KB 栈缓冲区处理 UDP 数据包
+- 超时控制避免空闲连接阻塞
+
+#### 5. Socket 配置模块 (socket.rs)
+
+**职责**: TCP Socket 参数配置
+
+**核心功能**:
+- `configure_tcp_socket()`: 配置 TCP_NODELAY 和缓冲区大小
+- 使用 `socket2` 库设置系统 socket 参数
+
+#### 6. API 模块 (api.rs)
+
+**职责**: HTTP API 处理，提供信息页面和 VLESS 链接生成
+
+**核心功能**:
+
+**信息页面** (`/`):
+- 返回 HTML 页面
+- 显示服务器 IP、端口、协议、版本信息
+
+**链接生成** (`/?email=user@example.com`):
+- 根据 email 查找用户 UUID
+- 生成对应协议的 VLESS 链接
+- 返回 JSON 格式（包含原始链接和 Base64 编码）
+
+#### 7. 公网 IP 模块 (public_ip.rs)
+
+**职责**: 自动获取公网 IP
+
+**核心功能**:
+- `fetch_public_ip_with_timeout()`: 带超时的公网 IP 获取
+- 并发请求多个 IP API
+- 使用通道取首个成功结果
+- 自动取消超时任务
+
+**API 端点**:
+- api.ipify.org
+- ifconfig.me/ip
+- api4.my-ip.io/ip
+- checkip.amazonaws.com
+- icanhazip.com
+
+#### 8. VLESS 链接模块 (vless_link.rs)
+
+**职责**: 生成 VLESS 协议链接
+
+**核心功能**:
+- `generate_vless_links()`: 生成 TCP 和 WebSocket 链接
+- 支持 Base64 编码
+- URL 编码特殊字符
+
+**链接格式**:
+```
+# TCP
+vless://{uuid}@{host}:{port}?encryption=none&security=none&type=tcp#{alias}
+
+# WebSocket
+vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{alias}
+```
+
+#### 9. 配置模块 (config.rs)
 
 **职责**: 配置文件解析和验证
 
@@ -195,7 +306,7 @@ if is_http_request(&header_bytes) {
 - 配置文件不存在时自动创建
 - 支持部分配置缺失
 
-#### 5. 缓冲区池模块 (buffer_pool.rs)
+#### 10. 缓冲区池模块 (buffer_pool.rs)
 
 **职责**: 对象池实现，复用缓冲区减少内存分配
 
@@ -205,7 +316,7 @@ if is_http_request(&header_bytes) {
 - 自动归还到池中
 - 减少内存分配 95%
 
-#### 6. 配置向导模块 (wizard.rs)
+#### 11. 配置向导模块 (wizard.rs)
 
 **职责**: 交互式配置向导，引导用户创建配置文件
 
@@ -220,7 +331,7 @@ if is_http_request(&header_bytes) {
 - 拒绝无效格式（`@example.com`, `user@`, `user@.`）
 - 友好的警告提示
 
-#### 7. WebSocket 模块 (ws.rs)
+#### 12. WebSocket 模块 (ws.rs)
 
 **职责**: WebSocket 协议处理，支持 VLESS over WebSocket
 
@@ -263,17 +374,36 @@ VLESS 协议处理
     ↓
 协议检测 (HTTP vs VLESS)
     ↓
-UUID 验证
-    ↓
-发送 VLESS 响应
-    ↓
-连接目标服务器
-    ↓
-双向数据转发
-    ├─ 客户端 → 目标 (上传)
-    └─ 目标 → 客户端 (下载)
+         ┌───────────────────────────────────────┐
+         │               VLESS 请求               │
+         ├───────────────────────────────────────┤
+         │ UUID 验证                             │
+         │ 发送 VLESS 响应                       │
+         │ 连接目标服务器                         │
+         │ 双向数据转发                           │
+         │   ├─ 客户端 → 目标 (上传)              │
+         │   └─ 目标 → 客户端 (下载)              │
+         └───────────────────────────────────────┘
     ↓
 连接关闭，清理资源
+```
+
+### HTTP API 流程
+
+```
+客户端 HTTP 请求
+    ↓
+协议检测 (HTTP 请求)
+    ↓
+解析请求路径和参数
+    ↓
+     ┌──────────────────────────────────────────┐
+     │ /                   → 信息页面 (HTML)    │
+     │ /?email=xxx         → VLESS 链接 (JSON)  │
+     │ 其他路径             → 404 响应          │
+     └──────────────────────────────────────────┘
+    ↓
+返回响应，关闭连接
 ```
 
 ### WebSocket 代理流程
@@ -283,7 +413,7 @@ UUID 验证
     ↓
 WebSocket 握手
     ↓
-协议检测 (TCP vs WebSocket)
+检测 WebSocket 路径
     ↓
 WebSocket 帧处理
     ↓
@@ -373,7 +503,8 @@ VLESS 协议解析
 - 无密码，简化部署
 
 ### 网络安全
-- 拒绝 HTTP 请求，防止非 VLESS 连接
+- HTTP 请求现在可以处理 API 请求（信息页面、VLESS 链接生成）
+- WebSocket 路径验证，防止路径遍历攻击
 - 建议配合 TLS 使用
 - UUID 不在日志中记录
 

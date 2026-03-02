@@ -12,6 +12,8 @@
 - 缓冲区池复用
 - TCP_NODELAY 优化
 - TUI 终端日志界面
+- 公网 IP 自动获取
+- HTTP API - VLESS 链接生成
 
 ## 快速开始
 
@@ -104,7 +106,45 @@ DISABLE_TUI=1 ./target/release/vless.exe
 | buffer_pool_size | 32 | 缓冲区池大小 |
 | ws_header_buffer_size | 8192 | WebSocket 头缓冲 (8KB) |
 
-## 部署
+## HTTP API
+
+服务器提供 HTTP API 用于获取服务器信息和生成 VLESS 链接。
+
+### 信息页面
+
+访问服务器根路径查看服务器信息：
+
+```
+http://<server-ip>:8443/
+```
+
+返回 HTML 页面，包含服务器 IP、端口、协议等信息。
+
+### 获取 VLESS 链接
+
+通过 `email` 参数获取用户的 VLESS 链接：
+
+```
+http://<server-ip>:8443/?email=your_email
+```
+
+返回 JSON 格式的 VLESS 链接：
+
+```json
+// TCP 协议
+{
+  "tcp": "vless://...",
+  "tcp_b64": "..."
+}
+
+// WebSocket 协议
+{
+  "ws": "vless://...",
+  "ws_b64": "..."
+}
+```
+
+### 部署
 
 1. 编译：`cargo build --release`
 2. 复制 `target/release/vless.exe` 到服务器

@@ -54,9 +54,14 @@ cargo check
 - `src/main.rs`: 程序入口，负责配置加载、服务器启动和 TUI 控制
 - `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
-- `src/server.rs`: 服务器核心逻辑，处理连接、用户认证、TCP/UDP 代理转发
+- `src/server.rs`: 服务器核心逻辑（调度器），处理连接分发
 - `src/ws.rs`: WebSocket 协议处理，支持 VLESS over WebSocket
-- `src/http.rs`: HTTP 请求检测（用于区分 HTTP 和 VLESS 请求）
+- `src/http.rs`: HTTP 请求检测和响应构建
+- `src/tcp.rs`: TCP 协议处理，包含 TCP/UDP 代理转发
+- `src/socket.rs`: TCP Socket 配置
+- `src/api.rs`: HTTP API 处理，提供信息页面和 VLESS 链接生成
+- `src/public_ip.rs`: 公网 IP 自动获取
+- `src/vless_link.rs`: VLESS 链接生成
 - `src/utils.rs`: 工具函数，VLESS URL 生成
 - `src/wizard.rs`: 配置向导，交互式生成配置文件
 - `src/buffer_pool.rs`: 缓冲区池，复用缓冲区减少内存分配
@@ -74,6 +79,12 @@ cargo check
 - 任一方向关闭时，整个代理连接终止
 - **可配置缓冲区**：默认128KB，适配高带宽场景
 - **缓冲区池**：复用缓冲区，减少内存分配开销
+
+**HTTP API 功能：**
+- 服务器启动时自动获取公网 IP
+- 访问根路径 `/` 显示服务器信息页面
+- 通过 `/?email=user@example.com` 获取用户 VLESS 链接
+- 支持 TCP 和 WebSocket 两种链接格式
 
 ### 配置文件结构
 
@@ -117,9 +128,14 @@ cargo check
 | `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerSettings`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器核心逻辑、代理转发 | `VlessServer`、`handle_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
-| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`handle_ws_proxy()` |
-| `src/http.rs` | HTTP 请求检测 | `is_http_request()` |
+| `src/server.rs` | 服务器调度器、连接分发 | `VlessServer`、`handle_connection()` - 根据协议类型分发到 tcp/ws 模块 |
+| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`is_websocket_upgrade()` |
+| `src/http.rs` | HTTP 请求检测和响应构建 | `is_http_request()`、`parse_http_request()`、`build_json_response()` |
+| `src/tcp.rs` | TCP 协议处理、代理转发 | `handle_tcp_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/socket.rs` | TCP Socket 配置 | `configure_tcp_socket()` |
+| `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和 VLESS 链接生成 |
+| `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
+| `src/vless_link.rs` | VLESS 链接生成 | `generate_vless_links()` - 生成 TCP/WS 链接 |
 | `src/utils.rs` | 工具函数、URL生成 | `generate_vless_url()` |
 | `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
 | `src/buffer_pool.rs` | 缓冲区池 | `BufferPool` |
@@ -146,11 +162,15 @@ cargo check
 - **服务器启动流程** → `src/main.rs:main()`
 - **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`
 - **VLESS 协议解析** → `src/protocol.rs:VlessRequest::decode()`
-- **用户认证逻辑** → `src/server.rs:handle_connection()`
-- **TCP 代理转发** → `src/server.rs:handle_tcp_proxy()`
-- **UDP 代理转发** → `src/server.rs:handle_udp_proxy()`
+- **连接分发调度** → `src/server.rs:handle_connection()` - 根据协议类型分发
+- **TCP 代理转发** → `src/tcp.rs:handle_tcp_proxy()`
+- **UDP 代理转发** → `src/tcp.rs:handle_udp_proxy()`
 - **HTTP 请求检测** → `src/http.rs:is_http_request()`
+- **HTTP API 处理** → `src/api.rs:handle_http_request()` - 信息页面和链接生成
+- **公网 IP 获取** → `src/public_ip.rs:fetch_public_ip_with_timeout()`
+- **VLESS 链接生成** → `src/vless_link.rs:generate_vless_links()`
 - **WebSocket 处理** → `src/ws.rs`
+- **Socket 配置** → `src/socket.rs:configure_tcp_socket()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 

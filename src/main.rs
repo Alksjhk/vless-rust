@@ -6,6 +6,11 @@ mod wizard;
 mod ws;
 mod version;
 mod tui;
+mod public_ip;
+mod vless_link;
+mod socket;
+mod tcp;
+mod api;
 
 use anyhow::Result;
 use config::Config;
@@ -77,6 +82,18 @@ async fn main() -> Result<()> {
         }
     };
 
+    // 获取公网 IP（用于生成 VLESS 链接）
+    let public_ip = match public_ip::fetch_public_ip_with_timeout(5).await {
+        Some(ip) => {
+            eprintln!("Public IP detected: {} (from {})", ip.ip, ip.source);
+            Some(ip.ip)
+        }
+        None => {
+            eprintln!("Warning: Failed to detect public IP, VLESS links will use listen address");
+            None
+        }
+    };
+
     // 打印服务器状态横幅（模板7）
     let listen_addr = format!("{}:{}", config.server.listen, config.server.port);
     let ws_path = if config.server.protocol == config::ProtocolType::WebSocket {
@@ -95,6 +112,7 @@ async fn main() -> Result<()> {
         buffer_pool_size: config.performance.buffer_pool_size,
         tcp_recv_buffer: config.performance.tcp_recv_buffer,
         tcp_send_buffer: config.performance.tcp_send_buffer,
+        public_ip: public_ip.clone(),
     };
 
     if use_tui {
@@ -110,11 +128,12 @@ async fn main() -> Result<()> {
         // 在后台线程运行服务器
         let config_clone = config.clone();
         let shutdown_flag_clone = shutdown_flag.clone();
+        let public_ip_clone = public_ip.clone();
         let server_handle = thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new()
                 .expect("Failed to create Tokio runtime - this is a fatal error");
             let _ = rt.block_on(async {
-                run_server_with_flag(config_clone, shutdown_flag_clone).await
+                run_server_with_flag(config_clone, shutdown_flag_clone, public_ip_clone).await
             });
         });
 
@@ -148,25 +167,28 @@ async fn main() -> Result<()> {
         }
         info!("  Users: {}", config.users.len());
 
-        run_server(config).await.map_err(|e| e.into())
+        run_server(config, public_ip).await.map_err(|e| e.into())
     }
 }
 
 /// 运行服务器
-async fn run_server(config: Config) -> Result<()> {
-    run_server_with_flag(config, Arc::new(AtomicBool::new(false))).await
+async fn run_server(config: Config, public_ip: Option<String>) -> Result<()> {
+    run_server_with_flag(config, Arc::new(AtomicBool::new(false)), public_ip).await
 }
 
 /// 运行服务器（带停止标志）
-async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>) -> Result<()> {
+async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, public_ip: Option<String>) -> Result<()> {
     // 创建服务器配置
     let bind_addr = config.bind_addr()?;
+    let port = config.server.port;
 
     // 添加用户及邮箱信息
     let mut server_config = ServerConfig::new(
         bind_addr,
         config.server.protocol,
         config.server.ws_path,
+        public_ip,
+        port,
     );
 
     for user in &config.users {
@@ -469,6 +491,12 @@ fn build_header_lines(status_info: &version::ServerStatusInfo) -> Vec<String> {
     lines.push(desc_line);
     lines.push(copyright_line);
     lines.push(String::new()); // 空行分隔
+    
+    // 公网 IP 行（如果可用）
+    if let Some(ref public_ip) = status_info.public_ip {
+        lines.push(format!("[█] Public IP: {}", public_ip));
+    }
+    
     lines.push(format!("[█] Listening on {}", status_info.listen_addr));
     lines.push(format!("[█] Protocol: {}", protocol_str));
 

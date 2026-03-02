@@ -19,6 +19,8 @@ pub struct ServerStatusInfo {
     pub tcp_recv_buffer: usize,
     #[allow(dead_code)]
     pub tcp_send_buffer: usize,
+    /// 公网 IP（用于生成 VLESS 链接）
+    pub public_ip: Option<String>,
 }
 
 /// 格式化缓冲区大小为人类可读格式
@@ -75,6 +77,11 @@ pub fn print_banner_with_status(status_info: &ServerStatusInfo) {
 
     // 构建状态行
     let mut status_lines = Vec::new();
+
+    // 公网 IP 行（如果可用）
+    if let Some(ref public_ip) = status_info.public_ip {
+        status_lines.push(format!("[█] Public IP: {}", public_ip));
+    }
 
     // 监听地址行
     status_lines.push(format!("[█] Listening on {}", status_info.listen_addr));
