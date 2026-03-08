@@ -21,12 +21,6 @@ pub fn get_service_file_path() -> PathBuf {
     home.join(".config/systemd/user").join(format!("{}.service", SERVICE_NAME))
 }
 
-/// 获取配置目录路径
-pub fn get_config_dir() -> PathBuf {
-    let home = dirs::home_dir().expect("Failed to get home directory");
-    home.join(".local/share/vless-rust")
-}
-
 /// 安装并启动 systemd 服务
 pub fn install_systemd_service() -> Result<(), String> {
     // 检查 Linux 系统
@@ -45,17 +39,16 @@ pub fn install_systemd_service() -> Result<(), String> {
 
     let exe_path_str = exe_path.to_string_lossy().to_string();
 
-    // 获取配置文件路径（与可执行文件同目录）
-    let config_dir = get_config_dir();
-    let config_path = config_dir.join("config.json");
+    // 获取可执行文件所在目录作为工作目录
+    let work_dir = exe_path
+        .parent()
+        .ok_or("Failed to get executable directory")?
+        .to_path_buf();
 
-    // 确保配置目录存在
-    if !config_dir.exists() {
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
+    // 配置文件路径（与可执行文件同目录）
+    let config_path = work_dir.join("config.json");
 
-    // 如果配置文件不存在，创建默认配置
+    // 如果配置文件不存在，提示用户
     if !config_path.exists() {
         println!("Config file not found, please run the server normally first to create config.json");
         println!("Expected config path: {}", config_path.display());
@@ -80,8 +73,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory={config_dir}
-ExecStart={exe_path} {config_path}
+WorkingDirectory={work_dir}
+ExecStart={exe_path} --no-tui {config_path}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -90,7 +83,7 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 "#,
-        config_dir = config_dir.display(),
+        work_dir = work_dir.display(),
         exe_path = exe_path_str,
         config_path = config_path.display()
     );
