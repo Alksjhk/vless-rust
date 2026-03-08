@@ -16,9 +16,10 @@ pub fn is_systemd_available() -> bool {
 }
 
 /// 获取 systemd service 文件路径
-pub fn get_service_file_path() -> PathBuf {
-    let home = dirs::home_dir().expect("Failed to get home directory");
-    home.join(".config/systemd/user").join(format!("{}.service", SERVICE_NAME))
+pub fn get_service_file_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir()
+        .ok_or("Failed to get home directory: user home not found")?;
+    Ok(home.join(".config/systemd/user").join(format!("{}.service", SERVICE_NAME)))
 }
 
 /// 安装并启动 systemd 服务
@@ -37,7 +38,9 @@ pub fn install_systemd_service() -> Result<(), String> {
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("Failed to get executable path: {}", e))?;
 
-    let exe_path_str = exe_path.to_string_lossy().to_string();
+    let exe_path_str = exe_path.to_str()
+        .ok_or("Executable path contains non-UTF-8 characters")?
+        .to_string();
 
     // 获取可执行文件所在目录作为工作目录
     let work_dir = exe_path
@@ -48,14 +51,24 @@ pub fn install_systemd_service() -> Result<(), String> {
     // 配置文件路径（与可执行文件同目录）
     let config_path = work_dir.join("config.json");
 
-    // 如果配置文件不存在，提示用户
+    // 如果配置文件不存在，警告用户
     if !config_path.exists() {
-        println!("Config file not found, please run the server normally first to create config.json");
+        println!();
+        println!("==========================================");
+        println!("Warning: Config file not found!");
+        println!("==========================================");
         println!("Expected config path: {}", config_path.display());
+        println!();
+        println!("The service may fail to start without a valid config file.");
+        println!("Please run the server normally first to create config.json:");
+        println!("  {} --no-tui", exe_path_str);
+        println!();
+        println!("Continuing with service installation...");
+        println!();
     }
 
     // 获取 service 文件路径
-    let service_file = get_service_file_path();
+    let service_file = get_service_file_path()?;
 
     // 确保 systemd user 目录存在
     if let Some(parent) = service_file.parent() {
@@ -116,14 +129,31 @@ WantedBy=default.target
         return Err(format!("Failed to start service: {}", stderr));
     }
 
+    // 等待服务启动
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // 检查服务状态
+    let status_output = Command::new("systemctl")
+        .args(["--user", "is-active", SERVICE_NAME])
+        .output()
+        .map_err(|e| format!("Failed to check service status: {}", e))?;
+
+    let is_active = status_output.status.success();
+
     println!();
     println!("==========================================");
-    println!("Service '{}' installed and started successfully!", SERVICE_NAME);
+    if is_active {
+        println!("Service '{}' installed and started successfully!", SERVICE_NAME);
+    } else {
+        println!("Service '{}' installed, but may not be running", SERVICE_NAME);
+        println!("Check status with: systemctl --user status {}", SERVICE_NAME);
+    }
     println!("==========================================");
     println!();
-    println!("Service file: {}", service_file.display());
-    println!("Config path:  {}", config_path.display());
-    println!("Executable:   {}", exe_path_str);
+    println!("Service Status: {}", if is_active { "active (running)" } else { "inactive" });
+    println!("Service file:   {}", service_file.display());
+    println!("Config path:    {}", config_path.display());
+    println!("Executable:     {}", exe_path_str);
     println!();
     println!("Commands:");
     println!("  View logs:   journalctl --user -u {} -f", SERVICE_NAME);
@@ -142,18 +172,30 @@ pub fn uninstall_systemd_service() -> Result<(), String> {
         return Err("This feature is only supported on Linux".to_string());
     }
 
-    // 停止并禁用服务
-    let _output = Command::new("systemctl")
+    // 停止服务
+    let output = Command::new("systemctl")
         .args(["--user", "stop", SERVICE_NAME])
         .output()
         .map_err(|e| format!("Failed to stop service: {}", e))?;
 
-    let _ = Command::new("systemctl")
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Warning: Failed to stop service: {}", stderr);
+    }
+
+    // 禁用服务
+    let output = Command::new("systemctl")
         .args(["--user", "disable", SERVICE_NAME])
-        .output();
+        .output()
+        .map_err(|e| format!("Failed to disable service: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Warning: Failed to disable service: {}", stderr);
+    }
 
     // 删除 service 文件
-    let service_file = get_service_file_path();
+    let service_file = get_service_file_path()?;
     if service_file.exists() {
         std::fs::remove_file(&service_file)
             .map_err(|e| format!("Failed to remove service file: {}", e))?;

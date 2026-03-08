@@ -58,10 +58,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 读取配置文件路径
-    let args: Vec<String> = env::args().collect();
-    let config_path = args.get(1)
-        .filter(|p| !p.starts_with("--"))
+    // 读取配置文件路径（重用上面的 args 变量）
+    let config_path = args.iter()
+        .find(|p| !p.starts_with("--"))
         .cloned()
         .unwrap_or_else(|| "config.json".to_string());
 

@@ -38,6 +38,30 @@ cargo run
 DISABLE_TUI=1 ./target/release/vless.exe
 ```
 
+### Systemd 服务管理（Linux）
+
+在 Linux 系统上，可以使用 systemd 管理服务器进程：
+
+```bash
+# 安装并启动服务
+./vless --init
+
+# 卸载服务
+./vless --remove
+
+# 查看服务状态
+systemctl --user status vless-rust-serve
+
+# 查看日志
+journalctl --user -u vless-rust-serve -f
+```
+
+**服务说明：**
+- 服务类型：systemd user service（无需 root 权限）
+- 服务名称：vless-rust-serve
+- 配置文件：可执行文件同目录下的 config.json
+- 自动重启：失败后 5 秒重启
+
 ### 客户端配置
 
 | 参数 | 值 |
