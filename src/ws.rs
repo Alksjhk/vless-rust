@@ -56,8 +56,9 @@ fn parse_http_path(data: &[u8]) -> Option<String> {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 let path = parts[1].to_string();
-                // 安全检查：防止路径遍历攻击
-                if path.contains("..") || path.contains('\\') {
+                // 安全检查：防止路径遍历攻击（包括 URL 编码形式）
+                let decoded_path = urlencoding::decode(&path).unwrap_or_default();
+                if decoded_path.contains("..") || decoded_path.contains('\\') {
                     return None;
                 }
                 return Some(path);

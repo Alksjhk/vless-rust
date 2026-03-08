@@ -86,7 +86,7 @@ pub fn parse_http_request(data: &[u8]) -> Option<HttpQuery> {
 fn build_response(status: u16, status_text: &str, content_type: &str, body: &str) -> Vec<u8> {
     let content_length = body.len();
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nX-XSS-Protection: 1; mode=block\r\n\r\n{}",
         status, status_text, content_type, content_length, body
     ).into_bytes()
 }
