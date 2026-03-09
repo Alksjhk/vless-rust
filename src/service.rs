@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::wizard::ConfigWizard;
+
 /// 服务名称
 const SERVICE_NAME: &str = "vless-rust-serve";
 
@@ -94,19 +96,40 @@ pub fn install_systemd_service() -> Result<(), String> {
     // 配置文件路径（与可执行文件同目录）
     let config_path = work_dir.join("config.json");
 
-    // 如果配置文件不存在，警告用户
+    // 如果配置文件不存在，先运行配置向导
     if !config_path.exists() {
         println!();
         println!("==========================================");
-        println!("Warning: Config file not found!");
+        println!("Config file not found!");
         println!("==========================================");
         println!("Expected config path: {}", config_path.display());
         println!();
-        println!("The service may fail to start without a valid config file.");
-        println!("Please run the server normally first to create config.json:");
-        println!("  {} --no-tui", exe_path_str);
+        println!("Starting configuration wizard to create config file...");
         println!();
-        println!("Continuing with service installation...");
+
+        // 运行配置向导
+        let config = ConfigWizard::run()
+            .map_err(|e| format!("Configuration wizard failed: {}", e))?;
+
+        // 保存配置文件
+        let json = config.to_json()
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(&config_path, json)
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+        // 在 Unix 系统上设置配置文件权限为只有所有者可读写
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&config_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600); // rw-------
+                let _ = std::fs::set_permissions(&config_path, perms);
+            }
+        }
+
+        println!();
+        println!("✓ Config file created: {}", config_path.display());
         println!();
     }
 
@@ -296,19 +319,40 @@ pub fn install_openrc_service() -> Result<(), String> {
     // 配置文件路径（与可执行文件同目录）
     let config_path = work_dir.join("config.json");
 
-    // 如果配置文件不存在，警告用户
+    // 如果配置文件不存在，先运行配置向导
     if !config_path.exists() {
         println!();
         println!("==========================================");
-        println!("Warning: Config file not found!");
+        println!("Config file not found!");
         println!("==========================================");
         println!("Expected config path: {}", config_path.display());
         println!();
-        println!("The service may fail to start without a valid config file.");
-        println!("Please run the server normally first to create config.json:");
-        println!("  {} --no-tui", exe_path_str);
+        println!("Starting configuration wizard to create config file...");
         println!();
-        println!("Continuing with service installation...");
+
+        // 运行配置向导
+        let config = ConfigWizard::run()
+            .map_err(|e| format!("Configuration wizard failed: {}", e))?;
+
+        // 保存配置文件
+        let json = config.to_json()
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(&config_path, json)
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+        // 在 Unix 系统上设置配置文件权限为只有所有者可读写
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&config_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600); // rw-------
+                let _ = std::fs::set_permissions(&config_path, perms);
+            }
+        }
+
+        println!();
+        println!("✓ Config file created: {}", config_path.display());
         println!();
     }
 
@@ -343,17 +387,6 @@ start_pre() {{
     checkpath --directory --owner root:root --mode 0755 /run
     # 创建日志文件并设置权限
     checkpath --file --owner root:root --mode 0644 "$output_log" "$error_log"
-}}
-
-start() {{
-    ebegin "Starting $name"
-    start-stop-daemon --start \
-        --background \
-        --make-pidfile \
-        --pidfile "$pidfile" \
-        --exec "$command" \
-        -- $command_args >> "$output_log" 2>> "$error_log"
-    eend $?
 }}
 "#,
         exe_path = exe_path_str,
