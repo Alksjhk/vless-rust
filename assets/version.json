@@ -1,5 +1,5 @@
 {
-  "version": "1.7.2",
+  "version": "1.7.3",
   "product_name": "VLESS Rust Server",
   "author":"HuY",
   "file_description": "High-performance VLESS protocol server",

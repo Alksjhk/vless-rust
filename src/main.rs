@@ -12,6 +12,7 @@ mod socket;
 mod tcp;
 mod api;
 mod service;
+mod atomic_write;
 
 use anyhow::Result;
 use config::Config;
@@ -81,25 +82,19 @@ async fn main() -> Result<()> {
             ];
             let config = wizard::ConfigWizard::run()?;
             let json = config.to_json()?;
-            std::fs::write(&config_path, json)?;
+
+            // 使用原子写入创建配置文件
+            atomic_write::atomic_write_file_with_perms(
+                std::path::Path::new(&config_path),
+                &json,
+                0o600 // rw-------
+            ).map_err(|e| anyhow::anyhow!("Failed to save config file: {}", e))?;
 
             // 在 Unix 系统上设置配置文件权限为只有所有者可读写
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = std::fs::metadata(&config_path) {
-                    let mut perms = metadata.permissions();
-                    perms.set_mode(0o600); // rw-------
-                    let mut perms_set = false;
-                    if let Err(e) = std::fs::set_permissions(&config_path, perms) {
-                        eprintln!("Failed to set config file permissions: {}", e);
-                    } else {
-                        perms_set = true;
-                    }
-                    if perms_set {
-                        messages.push(format!("Config file permissions set to 600 (rw-------)"));
-                    }
-                }
+                // 权限已在原子写入时设置，这里只记录日志
+                messages.push(format!("Config file permissions set to 600 (rw-------)"));
             }
 
             messages.push(format!("Config saved to {}", config_path));
