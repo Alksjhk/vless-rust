@@ -31,6 +31,26 @@ DISABLE_TUI=1 cargo run
 cargo check
 ```
 
+### Linux 服务管理
+
+```bash
+# 安装并启动服务（自动检测 systemd 或 OpenRC）
+./vless --init
+
+# 卸载服务
+./vless --remove
+```
+
+**Systemd（无需 root）：**
+- 服务名称：`vless-rust-serve`
+- 日志查看：`journalctl --user -u vless-rust-serve -f`
+- 管理命令：`systemctl --user stop/restart/status vless-rust-serve`
+
+**OpenRC（需要 root）：**
+- 服务名称：`vless-rust-serve`
+- 日志位置：`/var/log/vless-rust-serve.log`
+- 管理命令：`rc-service vless-rust-serve stop/restart/status`
+
 ### TUI 控制说明
 
 服务器默认启用 TUI 终端界面，提供以下交互功能：
@@ -62,11 +82,12 @@ cargo check
 - `src/api.rs`: HTTP API 处理，提供信息页面和 VLESS 链接生成
 - `src/public_ip.rs`: 公网 IP 自动获取
 - `src/vless_link.rs`: VLESS 链接生成
-- `src/utils.rs`: 工具函数，VLESS URL 生成
 - `src/wizard.rs`: 配置向导，交互式生成配置文件
-- `src/buffer_pool.rs`: 缓冲区池，复用缓冲区减少内存分配
 - `src/tui.rs`: TUI 终端界面，日志显示和交互控制
-- `src/version.rs`: 版本信息管理
+- `src/version.rs`: 版本信息管理（包含 version_info.rs）
+- `src/service.rs`: Linux 服务管理（systemd/OpenRC）
+- `src/atomic_write.rs`: 原子文件写入工具
+- `src/time.rs`: 时间工具（替代 chrono 库）
 
 ### 关键设计模式
 
@@ -78,7 +99,6 @@ cargo check
 - 使用 `tokio::spawn` 同时处理双向数据流
 - 任一方向关闭时，整个代理连接终止
 - **可配置缓冲区**：默认128KB，适配高带宽场景
-- **缓冲区池**：复用缓冲区，减少内存分配开销
 
 **HTTP API 功能：**
 - 服务器启动时自动获取公网 IP
@@ -136,9 +156,10 @@ cargo check
 | `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和 VLESS 链接生成 |
 | `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
 | `src/vless_link.rs` | VLESS 链接生成 | `generate_vless_links()` - 生成 TCP/WS 链接 |
-| `src/utils.rs` | 工具函数、URL生成 | `generate_vless_url()` |
 | `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
-| `src/buffer_pool.rs` | 缓冲区池 | `BufferPool` |
+| `src/service.rs` | Linux 服务管理 | `install_service()`、`uninstall_service()` - systemd/OpenRC 支持 |
+| `src/atomic_write.rs` | 原子文件写入 | `atomic_write_file()`、`atomic_write_file_with_perms()` |
+| `src/time.rs` | 时间工具（内部使用） | `UtcTime`、`utc_now_rfc3339()` - 替代 chrono |
 
 ### 配置文件
 
@@ -171,6 +192,7 @@ cargo check
 - **VLESS 链接生成** → `src/vless_link.rs:generate_vless_links()`
 - **WebSocket 处理** → `src/ws.rs`
 - **Socket 配置** → `src/socket.rs:configure_tcp_socket()`
+- **服务安装/卸载** → `src/service.rs:install_service()`、`uninstall_service()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
@@ -185,15 +207,15 @@ cargo check
 ## 编译优化
 
 Release 版本启用了以下优化（见 Cargo.toml）：
-- `lto = "fat"`: 链接时优化
-- `codegen-units = 16`: 代码生成单元数量
+- `lto = "thin"`: 链接时优化
+- `codegen-units = 1`: 单代码生成单元（最佳优化）
 - `opt-level = 3`: 优化级别
 - `panic = "abort"`: 减小二进制大小
+- `strip = true`: 剥离符号表减小二进制大小
 
 ## 性能优化说明
 
 - **可配置缓冲区**：默认128KB传输缓冲区
-- **缓冲区池**：复用缓冲区，减少内存分配开销
 - **TCP_NODELAY**：默认启用，降低延迟
 - **大缓冲区**：适配千兆网络
 

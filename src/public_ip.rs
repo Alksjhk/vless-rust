@@ -13,13 +13,14 @@ pub struct PublicIp {
     pub source: String,
 }
 
-/// 公网 IP API 端点列表
+
+/// 公网 IP API 端点列表（仅 IPv4）
 const IP_API_ENDPOINTS: &[&str] = &[
-    "https://api.ipify.org",
-    "https://ifconfig.me/ip",
     "https://api4.my-ip.io/ip",
+    "https://ipv4.icanhazip.com",
+    "https://v4.ident.me",
     "https://checkip.amazonaws.com",
-    "https://icanhazip.com",
+    "https://ifconfig.me/ip",
 ];
 
 /// 从单个 API 获取公网 IP

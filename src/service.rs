@@ -257,6 +257,18 @@ WantedBy=default.target
         return Err(format!("daemon-reload failed: {}", stderr));
     }
 
+    // 启用 lingering（让用户服务在系统启动时自动运行，而不需要用户登录）
+    // 这是实现开机自启动的关键步骤
+    let linger_output = Command::new("loginctl")
+        .args(["enable-linger"])
+        .output();
+
+    if let Ok(output) = &linger_output {
+        if output.status.success() {
+            println!("Enabled lingering for user services (auto-start on boot)");
+        }
+    }
+
     // 启用并启动服务
     let output = Command::new("systemctl")
         .args(["--user", "enable", "--now", SERVICE_NAME])
@@ -489,11 +501,15 @@ error_log="/var/log/${{RC_SVCNAME}}.err"
 depend() {{
     need net
     after firewall
+    after network-online
+    want network-online
 }}
 
 start_pre() {{
     # 确保 /run 目录存在
     checkpath --directory --owner root:root --mode 0755 /run
+    # 确保日志目录存在
+    checkpath --directory --owner root:root --mode 0755 /var/log
     # 创建日志文件并设置权限
     checkpath --file --owner root:root --mode 0644 "$output_log" "$error_log"
 }}
@@ -602,6 +618,7 @@ start_pre() {{
     println!("  Stop:        rc-service {} stop", SERVICE_NAME);
     println!("  Restart:     rc-service {} restart", SERVICE_NAME);
     println!("  Status:      rc-service {} status", SERVICE_NAME);
+    println!("  Disable:     rc-update del {} default", SERVICE_NAME);
     println!();
 
     Ok(())

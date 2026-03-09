@@ -19,6 +19,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **Base64**: base64 (WebSocket 认证)
 - **URL编码**: urlencoding
 - **Socket 配置**: socket2
+- **时间处理**: 自实现 time 模块（替代 chrono）
 
 ## 架构设计
 
@@ -81,10 +82,10 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和链接生成 |
 | `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
 | `src/vless_link.rs` | VLESS 链接生成 | `generate_vless_links()` - 生成 TCP/WS 链接 |
-| `src/buffer_pool.rs` | 缓冲区池实现 | `BufferPool`、`acquire()` - 对象池复用缓冲区 |
-| `src/utils.rs` | 工具函数、URL 生成 | `generate_vless_url()` - 生成 VLESS 协议 URL |
 | `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()` - 引导用户创建配置 |
 | `src/service.rs` | 系统服务管理 | `install_service()`、`uninstall_service()` - 自动检测并安装 systemd/OpenRC 服务 |
+| `src/atomic_write.rs` | 原子文件写入 | `atomic_write_file()`、`atomic_write_file_with_perms()` - 安全写入文件 |
+| `src/time.rs` | 时间工具 | `UtcTime`、`utc_now_rfc3339()` - 替代 chrono 库 |
 
 ### 配置文件
 
@@ -303,7 +304,7 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{
   - `tcp_send_buffer`: TCP 发送缓冲区（默认 256KB）
   - `udp_timeout`: UDP 会话超时（默认 30 秒）
   - `udp_recv_buffer`: UDP 接收缓冲区（默认 64KB）
-  - `buffer_pool_size`: 缓冲区池大小（默认 min(32, CPU核心数*4)）
+  - `buffer_pool_size`: 预留配置项（默认 32）
   - `ws_header_buffer_size`: WebSocket HTTP 头缓冲区（默认 8KB）
 
 **默认值策略**:
@@ -311,17 +312,35 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{
 - 配置文件不存在时自动创建
 - 支持部分配置缺失
 
-#### 10. 缓冲区池模块 (buffer_pool.rs)
+#### 10. 原子写入模块 (atomic_write.rs)
 
-**职责**: 对象池实现，复用缓冲区减少内存分配
+**职责**: 提供原子性文件写入操作
 
 **核心功能**:
-- 预分配固定数量的缓冲区
-- acquire() 获取缓冲区
-- 自动归还到池中
-- 减少内存分配 95%
+- `atomic_write_file()`: 使用临时文件+重命名实现原子写入
+- `atomic_write_file_with_perms()`: 带权限设置的原子写入
+- 写入过程中断不会损坏原文件
+- 避免多进程同时写入冲突
 
-#### 11. 配置向导模块 (wizard.rs)
+**安全特性**:
+- 临时文件机制确保原子性
+- 支持 Unix 权限设置
+- 完善的错误处理和提示
+
+#### 11. 时间工具模块 (time.rs)
+
+**职责**: 提供时间处理功能，替代 chrono 库
+
+**核心功能**:
+- `UtcTime`: UTC 时间结构体
+- `utc_now_rfc3339()`: 获取当前 RFC3339 格式时间
+- 手动实现 RFC3339 格式化，无外部依赖
+
+**优势**:
+- 零依赖，减小二进制体积
+- 满足项目时间格式化需求
+
+#### 12. 配置向导模块 (wizard.rs)
 
 **职责**: 交互式配置向导，引导用户创建配置文件
 
@@ -336,7 +355,7 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{
 - 拒绝无效格式（`@example.com`, `user@`, `user@.`）
 - 友好的警告提示
 
-#### 12. WebSocket 模块 (ws.rs)
+#### 13. WebSocket 模块 (ws.rs)
 
 **职责**: WebSocket 协议处理，支持 VLESS over WebSocket
 
@@ -367,6 +386,22 @@ Sec-WebSocket-Accept 响应
     ↓
 WebSocket 帧传输
     ↓
+VLESS 协议处理
+```
+
+#### 14. 服务管理模块 (service.rs)
+
+**职责**: Linux 系统服务管理，支持 systemd 和 OpenRC
+
+**核心功能**:
+- `install_service()`: 自动检测初始化系统并安装服务
+- `uninstall_service()`: 卸载服务
+- `detect_init_system()`: 检测可用的初始化系统
+
+**支持平台**:
+- **Systemd**: 无需 root 权限，用户级服务
+- **OpenRC**: 需要 root 权限，系统级服务
+
 **服务管理命令**:
 
 **Systemd (无需 root)**:
@@ -506,20 +541,14 @@ VLESS 协议解析
    - 零依赖运行
    - 可执行文件约 1 MB
 
-7. **缓冲区池化**:
-   - 使用 `object-pool` crate 实现对象池
-   - 复用 128KB 缓冲区，减少内存分配 95%
-   - 支持可配置的池大小（默认 min(32, CPU核心数*4)）
-   - 1000 连接场景内存占用减少 80% (128MB → 25MB)
-
-8. **优雅关闭**:
+7. **优雅关闭**:
    - 支持 SIGINT/SIGTERM 信号处理
    - Windows: Ctrl+C 监听
    - Unix: SIGINT 和 SIGTERM 处理
    - 停止接收新连接
    - 等待现有连接完成
 
-9. **TUI 日志显示**:
+8. **TUI 日志显示**:
    - 固定头部显示服务器状态信息
    - 可滚动的日志区域（最多 1000 条）
    - 自动滚动模式（新日志自动显示在底部）
@@ -530,6 +559,11 @@ VLESS 协议解析
      - `Page Up`/`Page Down`: 快速翻页
      - `Home`: 跳转到顶部
      - `End`: 跳转到底部并重新启用自动滚动
+
+9. **依赖精简**:
+   - 移除 chrono 依赖，自实现时间格式化
+   - 减小二进制体积
+   - 降低依赖复杂度
 
 ## 安全考虑
 

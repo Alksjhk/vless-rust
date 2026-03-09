@@ -1,292 +1,252 @@
 # AGENTS.md
 
-本文件定义项目开发中使用的 AI 助手（Agent）规则和行为规范。
+This file defines coding guidelines and development rules for AI agents working on this VLESS server project.
 
-## 项目角色定义
+## Build/Test Commands
 
-### 主开发者 (Primary Developer)
-- 负责核心功能开发和架构设计
-- 遵循代码规范和最佳实践
-- 确保代码质量和安全性
+```bash
+# Build
+cargo build              # Debug build
+cargo build --release    # Release build (optimized)
+make release             # Build + copy to root
+make dev                 # Debug build + copy to root
 
-### 审查者 (Reviewer)
-- 负责代码审查和质量把关
-- 检查安全性、性能、可维护性
-- 提供改进建议
+# Test
+cargo test                        # Run all tests
+cargo test test_name              # Run specific test
+cargo test --test test_file       # Run tests in specific file
+cargo test -- --nocapture         # Show println! output
 
-### 文档维护者 (Documentation Maintainer)
-- 负责文档与代码同步
-- 确保 API 文档、技术文档的准确性
-- 维护更新日志
+# Lint & Format
+cargo fmt                          # Format code
+cargo fmt --check                  # Check formatting (CI)
+cargo clippy                       # Run linter
+cargo clippy -- -D warnings        # Clippy with warnings as errors
 
-## 开发规范
+# Check
+cargo check                        # Fast compile check
+cargo check --release              # Check release build
 
-### 代码提交规范
+# Clean
+cargo clean                        # Remove build artifacts
+make clean                         # Clean + remove executables
 
-1. **提交前检查**:
-   - 使用 `/code-review` 进行代码审查
-   - 确保无 CRITICAL 和 HIGH 级别问题
-   - MEDIUM 级别问题必须修复或说明原因
-
-2. **提交信息格式**:
-   ```
-   <类型>: <简短描述>
-
-   <详细说明（可选）>
-
-   <关联 Issue（可选）>
-   ```
-
-   类型包括：
-   - `feat`: 新功能
-   - `fix`: 修复
-   - `refactor`: 重构
-   - `perf`: 性能优化
-   - `docs`: 文档更新
-   - `test`: 测试
-   - `chore`: 构建/工具
-
-3. **文档同步**:
-   - 修改功能时同步更新 `docs/technology.md`
-   - 使用 `/docs` 技能进行文档更新
-
-### 功能开发流程
-
-1. **需求分析**:
-   - 使用 `/brainstorm` 进行头脑风暴
-   - 明确需求和技术方案
-   - 添加到 `plan.md` 任务列表
-
-2. **开发阶段**:
-   - 按计划实施功能
-   - 遵循模块化设计
-   - 编写单元测试
-
-3. **审查阶段**:
-   - 使用 `/code-review` 审查代码
-   - 修复发现的问题
-   - 确保代码质量
-
-4. **文档阶段**:
-   - 更新技术文档
-   - 更新 API 文档
-   - 创建更新日志
-
-5. **提交阶段**:
-   - 使用 `/commit` 创建提交
-   - 遵循提交信息格式
-
-## 代码质量标准
-
-### 安全性
-- ✅ 无硬编码凭据（密码、密钥、Token）
-- ✅ 输入验证完善
-- ✅ 输出正确转义
-- ✅ 认证和授权机制健全
-- ✅ 敏感信息不记录到日志
-
-### 性能
-- ✅ 无不必要的内存分配
-- ✅ 避免阻塞操作
-- ✅ 合理使用缓存
-- ✅ 批量操作优化
-
-### 可维护性
-- ✅ 函数单一职责
-- ✅ 命名清晰明确
-- ✅ 注释准确完整
-- ✅ 模块化设计
-
-### 测试
-- ✅ 核心逻辑有单元测试
-- ✅ 关键路径有集成测试
-- ✅ 测试覆盖率不低于 60%
-
-## 文档规范
-
-### 必需文档
-
-1. **CLAUDE.md**:
-   - 项目概述
-   - 常用命令
-   - 架构设计
-   - 开发指南
-
-2. **README.md**:
-   - 项目介绍
-   - 快速开始
-   - 配置说明
-   - 部署指南
-
-3. **docs/technology.md**:
-   - 技术架构
-   - 模块职责
-   - 数据流
-   - 性能优化
-
-### 可选文档
-
-4. **docs/code-review.md**:
-   - 代码审查报告
-   - 问题列表
-   - 改进建议
-
-5. **docs/更新日志.md**:
-   - 格式: `YYYY.MM.DD-更新主题.md`
-   - 记录每次提交的功能变更
-
-### 文档更新时机
-
-- **必须更新**: 新增/修改/删除功能时
-- **可选更新**: 优化、重构、修复 bug
-- **不更新**: 语法错误、类型错误等细节修改
-
-## 技术栈约束
-
-### 后端 (Rust)
-- Edition: 2021
-- 异步运行时: Tokio
-- 错误处理: anyhow
-- 日志: tracing
-- 序列化: serde
-
-### 禁止事项
-- ❌ 修改技术栈（未经明确同意）
-- ❌ 使用硬编码绝对路径
-- ❌ 添加不必要的依赖
-- ❌ 破坏向后兼容性
-
-## 项目结构规范
-
-```
-project/
-├─ CLAUDE.md              # 项目指南
-├─ AGENTS.md              # Agent 规则（本文件）
-├─ plan.md                # 开发计划
-├─ README.md              # 项目说明
-├─ Cargo.toml             # Rust 配置
-├─ config.json            # 服务器配置
-├─ src/                   # Rust 源码
-│  ├─ main.rs             # 程序入口
-│  ├─ config.rs           # 配置模块
-│  ├─ protocol.rs         # 协议处理
-│  ├─ server.rs           # 服务器逻辑
-│  ├─ http.rs             # HTTP 请求检测
-│  ├─ utils.rs            # 工具函数
-│  └─ wizard.rs           # 配置向导
-├─ docs/                  # 文档目录
-│  ├─ technology.md       # 技术文档
-│  └─ *.md                # 其他文档
-└─ target/                # 编译输出
+# Run
+cargo run                          # Run debug build
+make run                           # Build and run release
 ```
 
-## 沟通协议
+## Code Style Guidelines
 
-### 与用户交互
+### Import Organization
 
-1. **明确需求**:
-   - 不确定时使用 `AskUserQuestion` 工具
-   - 提供选项供用户选择
-   - 不擅自做出重大决策
+Order imports in this sequence (separated by blank lines):
 
-2. **进度汇报**:
-   - 使用 Task 工具跟踪进度
-   - 完成任务后及时更新状态
-   - 遇到阻塞及时报告
+1. **Crate modules** (`use crate::`)
+2. **External crates** (alphabetically: `anyhow`, `bytes`, `serde`, etc.)
+3. **Standard library** (`use std::`)
+4. **Tokio** (`use tokio::`)
+5. **Tracing** (`use tracing::`)
+6. **Other external** (uuid, chrono, etc.)
 
-3. **问题处理**:
-   - 严重问题立即报告
-   - 提供解决方案
-   - 不隐瞒问题
+```rust
+// Example from src/server.rs
+use crate::api::{self, ApiConfig};
+use crate::config::{PerformanceConfig, ProtocolType};
+use crate::http::is_http_request;
+use crate::tcp;
+use crate::ws::{self, WsConnectionResult};
 
-### AI Agent 间协作
+use anyhow::Result;
+use bytes::Bytes;
+use std::collections::{HashSet, HashMap};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::io::AsyncReadExt;
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
+use tracing::{info, error, debug};
+use uuid::Uuid;
+```
 
-1. **code-review Agent**:
-   - 审查所有代码变更
-   - 生成审查报告
-   - 阻止有安全问题的代码
+### Naming Conventions
 
-2. **docs Agent**:
-   - 确保文档与代码同步
-   - 生成 API 文档
-   - 维护更新日志
+| Type | Convention | Example |
+|------|------------|---------|
+| Functions | `snake_case` | `handle_tcp_connection`, `parse_http_request` |
+| Variables | `snake_case` | `client_addr`, `target_stream` |
+| Constants | `SCREAMING_SNAKE_CASE` | `MAX_LOG_ENTRIES`, `WEBSOCKET_GUID` |
+| Types/Structs | `PascalCase` | `ServerConfig`, `VlessRequest` |
+| Enums | `PascalCase` | `ProtocolType`, `Command` |
+| Modules | `snake_case` | `tcp`, `ws`, `protocol` |
+| Private fields | `snake_case` | `config`, `performance_config` |
 
-3. **brainstorm Agent**:
-   - 功能设计前的头脑风暴
-   - 技术方案讨论
-   - 风险评估
+### Error Handling
 
-## 质量保证
+- Use `anyhow::Result<T>` for function return types
+- Use `anyhow::anyhow!("message")` for error creation
+- Use `?` operator for error propagation
+- Include context in error messages
 
-### 自动化检查
+```rust
+// Correct: Return anyhow::Result
+pub async fn run(&self) -> Result<()> {
+    let listener = TcpListener::bind(self.config.bind_addr).await?;
+    // ...
+}
 
-1. **编译检查**:
-   ```bash
-   cargo check
-   ```
+// Correct: Contextual error messages
+return Err(anyhow::anyhow!(
+    "Connection closed by client (addr: {})", 
+    client_addr
+));
 
-2. **格式检查**:
-   ```bash
-   cargo fmt --check
-   ```
+// Correct: Use map_err for custom error context
+.map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?
+```
 
-3. **Linter 检查**:
-   ```bash
-   cargo clippy
-   ```
+### Type Definitions
 
-4. **测试**:
-   ```bash
-   cargo test
-   ```
+```rust
+// Public structs with Debug, Clone
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub bind_addr: SocketAddr,
+    pub protocol: ProtocolType,
+    // ...
+}
 
-### 手动检查
+// Enums with derive macros
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProtocolType {
+    #[default]
+    Tcp,
+    #[serde(rename = "ws")]
+    WebSocket,
+}
+```
 
-1. **代码审查**: 使用 `/code-review`
-2. **文档审查**: 检查文档完整性
-3. **功能测试**: 手动验证关键功能
+### Async Functions
 
-## 应急处理
+- Use `async fn` for async functions
+- Use `tokio::spawn` for concurrent tasks
+- Use `tokio::select!` for waiting on multiple futures
 
-### 发现安全漏洞
+```rust
+// Spawn concurrent task
+tokio::spawn(async move {
+    if let Err(e) = Self::handle_connection(...).await {
+        error!("Error: {}", e);
+    }
+});
 
-1. 立即停止开发
-2. 评估影响范围
-3. 修复漏洞
-4. 审查代码
-5. 更新文档
+// Select pattern
+tokio::select! {
+    result = server.run() => { ... }
+    _ = shutdown => { ... }
+}
+```
 
-### 性能问题
+### Testing
 
-1. 使用 profiling 工具定位
-2. 分析瓶颈
-3. 优化关键路径
-4. 验证改进效果
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-### 兼容性问题
+    #[test]
+    fn test_parse_http_request_root() {
+        let data = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let query = parse_http_request(data).unwrap();
+        assert_eq!(query.path, "/");
+    }
 
-1. 识别破坏性变更
-2. 提供迁移指南
-3. 保持向后兼容
-4. 更新文档
+    #[tokio::test]
+    async fn test_async_function() {
+        // Async test with tokio runtime
+    }
+}
+```
 
-## 持续改进
+### Comments and Documentation
 
-### 定期审查
+- Use `//!` for module-level documentation
+- Use `///` for public item documentation
+- Include examples in doc comments for public APIs
 
-- 每月审查依赖更新
-- 每季度审查架构设计
-- 每半年审查技术栈
+```rust
+//! TCP Socket configuration module
+//!
+//! Provides TCP socket parameter configuration
 
-### 反馈循环
+/// Configure TCP socket options
+///
+/// # Arguments
+/// * `stream` - TCP connection stream
+/// * `recv_buf` - Receive buffer size (0 = system default)
+pub fn configure_tcp_socket(...) -> Result<()> {
+```
 
-- 收集用户反馈
-- 分析使用数据
-- 优化用户体验
-- 改进文档
+## Project Structure
 
----
+```
+src/
+├── main.rs         # Entry point, TUI, signal handling
+├── config.rs       # Configuration structures and parsing
+├── server.rs       # Server core and connection dispatcher
+├── protocol.rs     # VLESS protocol encoding/decoding
+├── tcp.rs          # TCP protocol handler
+├── ws.rs           # WebSocket protocol handler
+├── http.rs         # HTTP request detection and response
+├── api.rs          # HTTP API endpoints
+├── wizard.rs       # Interactive configuration wizard
+├── socket.rs       # TCP socket configuration
+├── vless_link.rs   # VLESS link generation
+├── public_ip.rs    # Public IP detection
+├── service.rs      # Systemd/OpenRC service management
+├── atomic_write.rs # Atomic file writing utilities
+├── tui.rs          # Terminal UI components
+├── version.rs      # Version display utilities
+├── version_info.rs # Generated version constants (auto)
+├── time.rs         # Time utilities (RFC3339)
+└── build.rs        # Build script (version embedding)
+```
 
-**版本**: 1.0.0
-**更新日期**: 2026-02-02
-**维护者**: 项目团队
+## Critical Rules
+
+1. **No hardcoding**: Never hardcode absolute paths, credentials, or magic numbers
+2. **Error context**: Always provide context in error messages
+3. **No `unwrap()` in production**: Use `expect()` with message or proper error handling
+4. **No `as any` or `@ts-ignore`**: Maintain type safety
+5. **No suppression of linter warnings without reason**
+6. **Atomic operations**: Use atomic writes for configuration files
+7. **Security**: Never log sensitive information (UUIDs in auth errors are acceptable for debugging)
+
+## Technology Stack
+
+- **Edition**: Rust 2021
+- **Async Runtime**: Tokio (rt-multi-thread)
+- **Error Handling**: anyhow
+- **Logging**: tracing + tracing-subscriber
+- **Serialization**: serde + serde_json
+- **Memory Allocator**: mimalloc (not on musl targets)
+
+## Commit Message Format
+
+```
+<type>: <short description>
+
+<optional body>
+
+<optional footer>
+```
+
+Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`
+
+## Pre-commit Checklist
+
+- [ ] `cargo fmt --check` passes
+- [ ] `cargo clippy` reports no errors
+- [ ] `cargo test` passes
+- [ ] No `unwrap()` in non-test code without justification
+- [ ] Documentation updated for public API changes

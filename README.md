@@ -9,11 +9,11 @@
 - UDP over TCP
 - 多用户 UUID 认证
 - 可配置缓冲区（默认 128KB）
-- 缓冲区池复用
 - TCP_NODELAY 优化
 - TUI 终端日志界面
 - 公网 IP 自动获取
 - HTTP API - VLESS 链接生成
+- Linux 服务管理（systemd/OpenRC）
 
 ## 快速开始
 
@@ -163,7 +163,7 @@ sudo rc-service vless-rust-serve restart   # 重启服务
 | tcp_send_buffer | 262144 | TCP 发送缓冲 (256KB) |
 | udp_timeout | 30 | UDP 会话超时 (秒) |
 | udp_recv_buffer | 65536 | UDP 接收缓冲 (64KB) |
-| buffer_pool_size | 32 | 缓冲区池大小 |
+| buffer_pool_size | 32 | 预留配置项 |
 | ws_header_buffer_size | 8192 | WebSocket 头缓冲 (8KB) |
 
 ## HTTP API
