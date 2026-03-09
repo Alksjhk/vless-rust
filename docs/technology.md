@@ -84,7 +84,7 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | `src/buffer_pool.rs` | 缓冲区池实现 | `BufferPool`、`acquire()` - 对象池复用缓冲区 |
 | `src/utils.rs` | 工具函数、URL 生成 | `generate_vless_url()` - 生成 VLESS 协议 URL |
 | `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()` - 引导用户创建配置 |
-| `src/service.rs` | Systemd 服务管理 | `install_systemd_service()`、`uninstall_systemd_service()` - Linux 服务安装和卸载 |
+| `src/service.rs` | 系统服务管理 | `install_service()`、`uninstall_service()` - 自动检测并安装 systemd/OpenRC 服务 |
 
 ### 配置文件
 
@@ -118,8 +118,10 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **VLESS 链接生成** → `src/vless_link.rs:generate_vless_links()`
 - **WebSocket 处理** → `src/ws.rs`
 - **Socket 配置** → `src/socket.rs:configure_tcp_socket()`
-- **Systemd 服务安装** → `src/service.rs:install_systemd_service()`
-- **Systemd 服务卸载** → `src/service.rs:uninstall_systemd_service()`
+- **服务安装** → `src/service.rs:install_service()` - 自动检测 systemd/OpenRC
+- **服务卸载** → `src/service.rs:uninstall_service()`
+- **Systemd 服务** → `src/service.rs:install_systemd_service()`
+- **OpenRC 服务** → `src/service.rs:install_openrc_service()`
 - **编译优化配置** → `Cargo.toml` - `[profile.release]`
 - **性能参数调整** → `config.json` - `performance` 节点
 
@@ -366,6 +368,8 @@ Sec-WebSocket-Accept 响应
 WebSocket 帧传输
     ↓
 **服务管理命令**:
+
+**Systemd (无需 root)**:
 ```bash
 # 查看状态
 systemctl --user status vless-rust-serve
@@ -376,6 +380,19 @@ journalctl --user -u vless-rust-serve -f
 # 停止/重启
 systemctl --user stop vless-rust-serve
 systemctl --user restart vless-rust-serve
+```
+
+**OpenRC (需要 root)**:
+```bash
+# 查看状态
+rc-service vless-rust-serve status
+
+# 查看日志
+tail -f /var/log/vless-rust-serve.log
+
+# 停止/重启
+rc-service vless-rust-serve stop
+rc-service vless-rust-serve restart
 ```
 
 **安全特性**:

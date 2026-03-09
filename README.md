@@ -38,9 +38,11 @@ cargo run
 DISABLE_TUI=1 ./target/release/vless.exe
 ```
 
-### Systemd 服务管理（Linux）
+### Linux 服务管理
 
-在 Linux 系统上，可以使用 systemd 管理服务器进程：
+在 Linux 系统上，可以使用 systemd 或 OpenRC 管理服务器进程。程序会自动检测系统使用的初始化系统。
+
+#### Systemd（无需 root 权限）
 
 ```bash
 # 安装并启动服务
@@ -54,13 +56,47 @@ systemctl --user status vless-rust-serve
 
 # 查看日志
 journalctl --user -u vless-rust-serve -f
+
+# 其他命令
+systemctl --user stop vless-rust-serve      # 停止服务
+systemctl --user restart vless-rust-serve   # 重启服务
 ```
 
-**服务说明：**
+**Systemd 服务说明：**
 - 服务类型：systemd user service（无需 root 权限）
 - 服务名称：vless-rust-serve
 - 配置文件：可执行文件同目录下的 config.json
 - 自动重启：失败后 5 秒重启
+
+#### OpenRC（需要 root 权限）
+
+适用于 Alpine Linux、Gentoo 等使用 OpenRC 的发行版。
+
+```bash
+# 安装并启动服务（需要 sudo）
+sudo ./vless --init
+
+# 卸载服务（需要 sudo）
+sudo ./vless --remove
+
+# 查看服务状态
+rc-service vless-rust-serve status
+
+# 查看日志
+tail -f /var/log/vless-rust-serve.log
+
+# 其他命令
+sudo rc-service vless-rust-serve stop      # 停止服务
+sudo rc-service vless-rust-serve restart   # 重启服务
+```
+
+**OpenRC 服务说明：**
+- 服务类型：系统服务（需要 root 权限）
+- 服务名称：vless-rust-serve
+- 配置文件：可执行文件同目录下的 config.json
+- 日志文件：
+  - 标准输出：/var/log/vless-rust-serve.log
+  - 错误输出：/var/log/vless-rust-serve.err
 
 ### 客户端配置
 

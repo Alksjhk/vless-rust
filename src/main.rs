@@ -36,9 +36,9 @@ async fn main() -> Result<()> {
     // 读取命令行参数
     let args: Vec<String> = env::args().collect();
 
-    // 检查 --init 参数（安装 systemd 服务）
+    // 检查 --init 参数（安装系统服务）
     if args.iter().any(|a| a == "--init") {
-        match service::install_systemd_service() {
+        match service::install_service() {
             Ok(_) => return Ok(()),
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -47,9 +47,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 检查 --remove 参数（卸载 systemd 服务）
+    // 检查 --remove 参数（卸载系统服务）
     if args.iter().any(|a| a == "--remove") {
-        match service::uninstall_systemd_service() {
+        match service::uninstall_service() {
             Ok(_) => return Ok(()),
             Err(e) => {
                 eprintln!("Error: {}", e);
