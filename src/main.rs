@@ -59,8 +59,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 读取配置文件路径（重用上面的 args 变量）
+    // 读取配置文件路径（跳过 args[0]，它是可执行文件路径）
     let config_path = args.iter()
+        .skip(1)  // 跳过 args[0]（可执行文件路径）
         .find(|p| !p.starts_with("--"))
         .cloned()
         .unwrap_or_else(|| "config.json".to_string());

@@ -207,7 +207,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory={work_dir}
-ExecStart={exe_path} --no-tui {config_path}
+ExecStart={exe_path} {config_path} --no-tui
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -476,7 +476,7 @@ name="vless-rust-serve"
 description="VLESS Rust Server"
 
 command="{exe_path}"
-command_args="--no-tui {config_path}"
+command_args="{config_path} --no-tui"
 command_background="yes"
 pidfile="/run/${{RC_SVCNAME}}.pid"
 
@@ -722,15 +722,6 @@ fn check_config_path_conflict(exe_path: &Path, config_path: &Path) -> Result<(),
                 config_canon.display()
             ));
         }
-    }
-
-    // 检查配置文件路径是否是可执行文件所在目录
-    if config_path.parent() == Some(exe_path) {
-        return Err(format!(
-            "Config file path cannot be the executable itself: {}\n\
-             The config file will be created in the same directory as the executable.",
-            config_path.display()
-        ));
     }
 
     // 检查配置文件路径是否已经存在且是可执行文件
