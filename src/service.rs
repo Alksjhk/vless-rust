@@ -180,14 +180,22 @@ pub fn install_systemd_service() -> Result<(), String> {
     }
 
     // 备份现有的 service 文件（如果存在）
-    let backup_file = service_file.with_extension("service.backup");
-    let has_backup = if service_file.exists() {
-        if let Err(e) = std::fs::copy(&service_file, &backup_file) {
+    // 使用时间戳生成唯一的备份文件名，避免覆盖之前的备份
+    let backup_file = if service_file.exists() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_path = service_file.with_extension(format!("service.backup.{}", timestamp));
+        if let Err(e) = std::fs::copy(&service_file, &backup_path) {
             eprintln!("Warning: Failed to backup existing service file: {}", e);
+            None
+        } else {
+            println!("Backup created: {}", backup_path.display());
+            Some(backup_path)
         }
-        true
     } else {
-        false
+        None
     };
 
     // 构建 service 文件内容
@@ -216,19 +224,24 @@ WantedBy=default.target
     // 使用原子写入 service 文件
     if let Err(e) = atomic_write::atomic_write_file(&service_file, &service_content) {
         // 写入失败，尝试恢复备份
-        if has_backup && backup_file.exists() {
-            if let Err(restore_err) = std::fs::copy(&backup_file, &service_file) {
-                eprintln!("Error: Failed to restore backup: {}", restore_err);
-            } else {
-                eprintln!("Restored backup service file after write failure");
+        if let Some(ref backup_path) = backup_file {
+            if backup_path.exists() {
+                if let Err(restore_err) = std::fs::copy(backup_path, &service_file) {
+                    eprintln!("Error: Failed to restore backup: {}", restore_err);
+                    eprintln!("Backup file preserved at: {}", backup_path.display());
+                } else {
+                    eprintln!("Restored backup service file after write failure");
+                }
             }
         }
-        return Err(format!("Failed to write service file: {}", e));
+        // 注意：不删除配置文件，因为配置文件本身是完整有效的
+        // 用户可以手动修复 service 文件或重新运行安装命令
+        return Err(format!("Failed to write service file: {}. Config file preserved at: {}", e, config_path.display()));
     }
 
-    // 写入成功，删除备份文件
-    if backup_file.exists() {
-        let _ = std::fs::remove_file(&backup_file);
+    // 写入成功，保留备份文件（不删除），用户可以手动清理
+    if let Some(ref backup_path) = backup_file {
+        println!("Backup preserved at: {} (can be deleted manually if service works correctly)", backup_path.display());
     }
 
     println!("Created systemd service file: {}", service_file.display());
@@ -437,14 +450,22 @@ pub fn install_openrc_service() -> Result<(), String> {
     }
 
     // 备份现有的 service 文件（如果存在）
-    let backup_file = service_file.with_extension("backup");
-    let has_backup = if service_file.exists() {
-        if let Err(e) = std::fs::copy(&service_file, &backup_file) {
+    // 使用时间戳生成唯一的备份文件名，避免覆盖之前的备份
+    let backup_file = if service_file.exists() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_path = service_file.with_extension(format!("backup.{}", timestamp));
+        if let Err(e) = std::fs::copy(&service_file, &backup_path) {
             eprintln!("Warning: Failed to backup existing service file: {}", e);
+            None
+        } else {
+            println!("Backup created: {}", backup_path.display());
+            Some(backup_path)
         }
-        true
     } else {
-        false
+        None
     };
 
     // 构建 OpenRC init 脚本内容
@@ -485,14 +506,19 @@ start_pre() {{
     // 使用原子写入 service 文件
     if let Err(e) = atomic_write::atomic_write_file(&service_file, &script_content) {
         // 写入失败，尝试恢复备份
-        if has_backup && backup_file.exists() {
-            if let Err(restore_err) = std::fs::copy(&backup_file, &service_file) {
-                eprintln!("Error: Failed to restore backup: {}", restore_err);
-            } else {
-                eprintln!("Restored backup service file after write failure");
+        if let Some(ref backup_path) = backup_file {
+            if backup_path.exists() {
+                if let Err(restore_err) = std::fs::copy(backup_path, &service_file) {
+                    eprintln!("Error: Failed to restore backup: {}", restore_err);
+                    eprintln!("Backup file preserved at: {}", backup_path.display());
+                } else {
+                    eprintln!("Restored backup service file after write failure");
+                }
             }
         }
-        return Err(format!("Failed to write service file: {}", e));
+        // 注意：不删除配置文件，因为配置文件本身是完整有效的
+        // 用户可以手动修复 service 文件或重新运行安装命令
+        return Err(format!("Failed to write service file: {}. Config file preserved at: {}", e, config_path.display()));
     }
 
     // 设置可执行权限
@@ -501,17 +527,24 @@ start_pre() {{
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = std::fs::set_permissions(&service_file, std::fs::Permissions::from_mode(0o755)) {
             // 权限设置失败，恢复备份
-            if has_backup && backup_file.exists() {
-                let _ = std::fs::copy(&backup_file, &service_file);
-                eprintln!("Restored backup after permission error");
+            if let Some(ref backup_path) = backup_file {
+                if backup_path.exists() {
+                    if let Err(restore_err) = std::fs::copy(backup_path, &service_file) {
+                        eprintln!("Error: Failed to restore backup after permission error: {}", restore_err);
+                        eprintln!("Backup file preserved at: {}", backup_path.display());
+                    } else {
+                        eprintln!("Restored backup after permission error");
+                    }
+                }
             }
-            return Err(format!("Failed to set permissions: {}", e));
+            // 注意：不删除配置文件，因为配置文件本身是完整有效的
+            return Err(format!("Failed to set permissions: {}. Config file preserved at: {}", e, config_path.display()));
         }
     }
 
-    // 写入成功，删除备份文件
-    if backup_file.exists() {
-        let _ = std::fs::remove_file(&backup_file);
+    // 写入成功，保留备份文件（不删除），用户可以手动清理
+    if let Some(ref backup_path) = backup_file {
+        println!("Backup preserved at: {} (can be deleted manually if service works correctly)", backup_path.display());
     }
 
     println!("Created OpenRC service file: {}", service_file.display());
@@ -663,13 +696,32 @@ fn is_openrc_service_running() -> bool {
 
 /// 检查配置文件路径是否与可执行文件冲突
 fn check_config_path_conflict(exe_path: &Path, config_path: &Path) -> Result<(), String> {
+    // 规范化路径进行比较（解析符号链接和相对路径）
+    let exe_canonical = exe_path.canonicalize().ok();
+    let config_canonical = config_path.canonicalize().ok();
+
     // 检查配置文件路径是否与可执行文件相同
     if exe_path == config_path {
         return Err(format!(
             "Config file path conflicts with executable path: {}\n\
-             Please specify a different config file location.",
+             The config file cannot be the same as the executable.\n\
+             Please move the executable to a different location.",
             config_path.display()
         ));
+    }
+
+    // 检查规范化的路径是否相同（处理符号链接）
+    if let (Some(exe_canon), Some(config_canon)) = (&exe_canonical, &config_canonical) {
+        if exe_canon == config_canon {
+            return Err(format!(
+                "Config file path resolves to the same file as the executable (possibly via symlink):\n\
+                 Executable: {}\n\
+                 Config path: {}\n\
+                 Please specify a different config file location.",
+                exe_canon.display(),
+                config_canon.display()
+            ));
+        }
     }
 
     // 检查配置文件路径是否是可执行文件所在目录
@@ -679,6 +731,36 @@ fn check_config_path_conflict(exe_path: &Path, config_path: &Path) -> Result<(),
              The config file will be created in the same directory as the executable.",
             config_path.display()
         ));
+    }
+
+    // 检查配置文件路径是否已经存在且是可执行文件
+    // 这可以防止覆盖任何已存在的二进制文件
+    if config_path.exists() {
+        // 尝试检查文件是否是可执行文件
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(config_path) {
+                let mode = metadata.permissions().mode();
+                // 检查是否有执行权限（用户、组或其他）
+                if mode & 0o111 != 0 {
+                    return Err(format!(
+                        "Config file path '{}' already exists and appears to be an executable.\n\
+                         Refusing to overwrite an executable file.",
+                        config_path.display()
+                    ));
+                }
+            }
+        }
+
+        // 跨平台检查：如果文件不是普通文件（可能是目录、设备等）
+        if !config_path.is_file() {
+            return Err(format!(
+                "Config file path '{}' exists but is not a regular file.\n\
+                 Cannot create config file at this location.",
+                config_path.display()
+            ));
+        }
     }
 
     Ok(())
