@@ -198,6 +198,7 @@ src/
 ├── tcp.rs          # TCP protocol handler
 ├── ws.rs           # WebSocket protocol handler
 ├── http.rs         # HTTP request detection and response
+├── address.rs      # Address resolution utilities
 ├── api.rs          # HTTP API endpoints
 ├── wizard.rs       # Interactive configuration wizard
 ├── socket.rs       # TCP socket configuration
@@ -208,7 +209,6 @@ src/
 ├── tui.rs          # Terminal UI components
 ├── version.rs      # Version display utilities
 ├── version_info.rs # Generated version constants (auto)
-├── time.rs         # Time utilities (RFC3339)
 └── build.rs        # Build script (version embedding)
 ```
 

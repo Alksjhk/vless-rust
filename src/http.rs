@@ -114,6 +114,70 @@ pub fn build_400_response(error: &str) -> Vec<u8> {
     build_response(400, "Bad Request", "application/json; charset=utf-8", &body)
 }
 
+/// 从 HTTP 请求数据中提取请求路径
+///
+/// # Arguments
+/// * `data` - HTTP 请求数据
+///
+/// # Returns
+/// * `Option<String>` - 请求路径（包含安全检查）
+pub fn extract_http_path(data: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(data);
+    for line in text.lines() {
+        if line.starts_with("GET ") || line.starts_with("POST ") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let path = parts[1].to_string();
+                // 安全检查：防止路径遍历攻击
+                let decoded_path = urlencoding::decode(&path).unwrap_or_default();
+                if decoded_path.contains("..") || decoded_path.contains('\\') {
+                    return None;
+                }
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// 从 HTTP 头中提取指定头的值
+///
+/// # Arguments
+/// * `headers` - HTTP 头数据
+/// * `header_name` - 头名称
+///
+/// # Returns
+/// * `Option<String>` - 头的值
+pub fn extract_header_value(headers: &[u8], header_name: &str) -> Option<String> {
+    let text = String::from_utf8_lossy(headers);
+    let target_lower = header_name.to_lowercase();
+    for line in text.lines() {
+        let lower_line = line.to_lowercase();
+        if let Some(pos) = lower_line.find(':') {
+            let name = &lower_line[..pos].trim();
+            if *name == target_lower {
+                // 防御性边界检查
+                let value_start = (pos + 1).min(line.len());
+                return Some(line[value_start..].trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 验证 HTTP 请求头的基本安全性
+///
+/// 检查 Content-Length 是否过大
+pub fn validate_http_headers(headers: &[u8]) -> Option<&'static str> {
+    if let Some(content_length) = extract_header_value(headers, "Content-Length") {
+        let length: usize = content_length.parse().unwrap_or(0);
+        if length > 1024 * 1024 {
+            return Some("Content-Length too large");
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

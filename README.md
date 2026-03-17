@@ -38,6 +38,11 @@ cargo run
 DISABLE_TUI=1 ./target/release/vless.exe
 ```
 
+**优雅关闭**
+- Unix 系统：支持 SIGINT (Ctrl+C) 和 SIGTERM 信号
+- Windows 系统：支持 Ctrl+C 信号
+- 关闭时会优雅终止所有连接，避免资源泄露
+
 ### Linux 服务管理
 
 在 Linux 系统上，可以使用 systemd 或 OpenRC 管理服务器进程。程序会自动检测系统使用的初始化系统。

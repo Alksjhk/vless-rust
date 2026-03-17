@@ -3,8 +3,10 @@
 //! 处理 WebSocket 连接上的 VLESS 协议请求
 
 use crate::config::PerformanceConfig;
-use crate::protocol::{VlessRequest, VlessResponse, Address, Command};
+use crate::protocol::{VlessRequest, VlessResponse, Command};
 use crate::socket::configure_tcp_socket;
+use crate::address::resolve_protocol_address;
+use crate::http::{extract_http_path, extract_header_value, validate_http_headers};
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -48,53 +50,6 @@ pub fn is_websocket_upgrade(data: &[u8]) -> bool {
     has_upgrade && has_connection_upgrade && has_ws_key
 }
 
-/// 解析 HTTP 请求头，获取请求路径
-fn parse_http_path(data: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(data);
-    for line in text.lines() {
-        if line.starts_with("GET ") || line.starts_with("POST ") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                let path = parts[1].to_string();
-                // 安全检查：防止路径遍历攻击（包括 URL 编码形式）
-                let decoded_path = urlencoding::decode(&path).unwrap_or_default();
-                if decoded_path.contains("..") || decoded_path.contains('\\') {
-                    return None;
-                }
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
-/// 从 HTTP 头中提取指定头的值
-fn get_header_value(headers: &[u8], header_name: &str) -> Option<String> {
-    let text = String::from_utf8_lossy(headers);
-    let target = format!("{}:", header_name);
-    for line in text.lines() {
-        let lower_line = line.to_lowercase();
-        let target_lower = target.to_lowercase();
-        if lower_line.starts_with(&target_lower) {
-            if let Some(value) = line.get(target.len()..) {
-                return Some(value.trim().to_string());
-            }
-        }
-    }
-    None
-}
-
-/// 验证 HTTP 请求头的基本安全性
-fn validate_http_headers(headers: &[u8]) -> Result<()> {
-    if let Some(content_length) = get_header_value(headers, "Content-Length") {
-        let length: usize = content_length.parse().unwrap_or(0);
-        if length > 1024 * 1024 {
-            return Err(anyhow!("Content-Length too large"));
-        }
-    }
-    Ok(())
-}
-
 /// 验证并处理 WebSocket 升级请求，手动完成握手
 async fn process_ws_handshake(
     mut stream: TcpStream,
@@ -121,15 +76,17 @@ async fn process_ws_handshake(
         }
     }
 
-    let path = parse_http_path(&header_buf).ok_or_else(|| anyhow!("Invalid HTTP request"))?;
+    let path = extract_http_path(&header_buf).ok_or_else(|| anyhow!("Invalid HTTP request"))?;
     if path != expected_path {
         warn!("WebSocket path mismatch: expected '{}', got '{}'", expected_path, path);
         return Err(anyhow!("Invalid WebSocket path: {}", path));
     }
 
-    validate_http_headers(&header_buf)?;
+    if let Some(error) = validate_http_headers(&header_buf) {
+        return Err(anyhow!("{}", error));
+    }
 
-    let ws_key = get_header_value(&header_buf, "Sec-WebSocket-Key")
+    let ws_key = extract_header_value(&header_buf, "Sec-WebSocket-Key")
         .ok_or_else(|| anyhow!("Missing Sec-WebSocket-Key header"))?;
 
     let mut sha1 = Sha1::new();
@@ -171,7 +128,7 @@ pub async fn handle_ws_upgrade(
         return Err(anyhow!("Empty request"));
     }
 
-    let path = parse_http_path(&buffer[..n]).ok_or_else(|| anyhow!("Invalid HTTP request"))?;
+    let path = extract_http_path(&buffer[..n]).ok_or_else(|| anyhow!("Invalid HTTP request"))?;
 
     if path != ws_path {
         warn!("WebSocket path mismatch: expected '{}', got '{}'", ws_path, path);
@@ -336,19 +293,7 @@ pub async fn handle_ws_proxy(
     info!("Starting WebSocket proxy for user {} from {}", request.uuid, client_addr);
 
     // 解析目标地址
-    let target_addr = match &request.address {
-        Address::Domain(domain) => {
-            let domain_str = std::str::from_utf8(domain)
-                .map_err(|_| anyhow!("Invalid domain encoding"))?;
-            let addr_str = format!("{}:{}", domain_str, request.port);
-            let resolved = tokio::net::lookup_host(&addr_str)
-                .await?
-                .next()
-                .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
-            resolved
-        }
-        _ => request.address.to_socket_addr(request.port)?,
-    };
+    let target_addr = resolve_protocol_address(&request.address, request.port).await?;
 
     debug!("Connecting to target: {}", target_addr);
     let mut target_stream = tokio::net::TcpStream::connect(target_addr).await?;

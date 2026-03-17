@@ -70,6 +70,7 @@ impl ServerConfig {
 pub struct VlessServer {
     config: Arc<ServerConfig>,
     performance_config: PerformanceConfig,
+    shutdown: Option<tokio::sync::broadcast::Sender<()>>,
 }
 
 impl VlessServer {
@@ -81,7 +82,14 @@ impl VlessServer {
         Self {
             config: Arc::new(config),
             performance_config,
+            shutdown: None,
         }
+    }
+
+    /// 设置关闭信号通道
+    pub fn with_shutdown(mut self, shutdown: tokio::sync::broadcast::Sender<()>) -> Self {
+        self.shutdown = Some(shutdown);
+        self
     }
 
     /// 启动服务器
@@ -89,9 +97,25 @@ impl VlessServer {
         let listener = TcpListener::bind(self.config.bind_addr).await?;
         info!("VLESS server listening on {}", self.config.bind_addr);
 
+        // 如果有关闭信号，监听它
+        let mut shutdown_rx = self.shutdown.as_ref().map(|s| s.subscribe());
+
         loop {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
+            // 使用 tokio::select! 来监听关闭信号
+            let accept_result = if let Some(ref mut rx) = shutdown_rx {
+                tokio::select! {
+                    result = listener.accept() => Some(result),
+                    _ = rx.recv() => {
+                        info!("Server shutdown signal received, stopping accept loop");
+                        break;
+                    }
+                }
+            } else {
+                Some(listener.accept().await)
+            };
+
+            match accept_result {
+                Some(Ok((stream, addr))) => {
                     let config = Arc::clone(&self.config);
                     let performance_config = self.performance_config.clone();
                     tokio::spawn(async move {
@@ -105,11 +129,15 @@ impl VlessServer {
                         }
                     });
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     error!("Failed to accept connection: {}", e);
                 }
+                None => break, // shutdown signal received
             }
         }
+
+        info!("Server stopped accepting new connections");
+        Ok(())
     }
 
     /// 处理客户端连接（调度器）

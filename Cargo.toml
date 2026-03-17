@@ -3,7 +3,7 @@
 # ============================================================================
 [package]
 name = "vless-rust"
-version = "1.7.6"
+version = "1.7.7"
 edition = "2021"
 default-run = "vless"
 authors = ["HuY"]

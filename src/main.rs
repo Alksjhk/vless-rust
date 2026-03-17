@@ -13,6 +13,7 @@ mod tcp;
 mod api;
 mod service;
 mod atomic_write;
+mod address;
 
 use anyhow::Result;
 use config::Config;
@@ -222,7 +223,12 @@ async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, pu
 
     // 启动服务器
     let performance_config = config.performance.clone();
-    let server = VlessServer::new(server_config, performance_config);
+
+    // 创建关闭信号通道
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+
+    let server = VlessServer::new(server_config, performance_config)
+        .with_shutdown(shutdown_tx.clone());
 
     info!("Starting VLESS server...");
 
@@ -272,9 +278,11 @@ async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, pu
         }
         _ = shutdown => {
             info!("Shutting down server...");
+            let _ = shutdown_tx.send(());
         }
         _ = flag_check => {
             info!("Shutting down server...");
+            let _ = shutdown_tx.send(());
         }
     }
 
@@ -422,21 +430,7 @@ fn run_tui_with_channel(
 
             // 绘制日志区域
             let log_lines: Vec<Line> = log_entries.iter().map(|entry| {
-                let level_color = match entry.level {
-                    tracing::Level::ERROR => Color::Red,
-                    tracing::Level::WARN => Color::Yellow,
-                    tracing::Level::INFO => Color::Green,
-                    tracing::Level::DEBUG => Color::Cyan,
-                    tracing::Level::TRACE => Color::Gray,
-                };
-
-                let level_str = match entry.level {
-                    tracing::Level::ERROR => "ERROR",
-                    tracing::Level::WARN => "WARN ",
-                    tracing::Level::INFO => "INFO ",
-                    tracing::Level::DEBUG => "DEBUG",
-                    tracing::Level::TRACE => "TRACE",
-                };
+                let (level_color, level_str) = level_style(entry.level);
 
                 Line::from(vec![
                     ratatui::text::Span::styled(
@@ -486,6 +480,18 @@ fn run_tui_with_channel(
     terminal.show_cursor()?;
 
     result
+}
+
+/// 获取日志级别对应的样式
+fn level_style(level: tracing::Level) -> (ratatui::style::Color, &'static str) {
+    use ratatui::style::Color;
+    match level {
+        tracing::Level::ERROR => (Color::Red, "ERROR"),
+        tracing::Level::WARN => (Color::Yellow, "WARN "),
+        tracing::Level::INFO => (Color::Green, "INFO "),
+        tracing::Level::DEBUG => (Color::Cyan, "DEBUG"),
+        tracing::Level::TRACE => (Color::Gray, "TRACE"),
+    }
 }
 
 /// 构建头部显示行（纯文本，无边框）

@@ -19,7 +19,6 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 - **Base64**: base64 (WebSocket 认证)
 - **URL编码**: urlencoding
 - **Socket 配置**: socket2
-- **时间处理**: 自实现 time 模块（替代 chrono）
 
 ## 架构设计
 
@@ -69,15 +68,16 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器、配置向导触发、TUI 日志显示 |
+| `src/main.rs` | 程序入口、服务器启动 | `main()` - 加载配置、启动服务器、关闭信号处理、TUI 日志显示 |
 | `src/tui.rs` | TUI 模块 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
 | `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerConfig`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器调度器 | `VlessServer`、`handle_connection()` - 协议分发调度 |
+| `src/server.rs` | 服务器调度器 | `VlessServer`、`handle_connection()` - 协议分发调度、优雅关闭 |
 | `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`is_websocket_upgrade()` |
-| `src/http.rs` | HTTP 请求检测和响应构建 | `is_http_request()`、`parse_http_request()`、`build_json_response()` |
+| `src/http.rs` | HTTP 请求检测、工具函数、响应构建 | `is_http_request()`、`extract_http_path()`、`build_json_response()` |
 | `src/tcp.rs` | TCP 协议处理 | `handle_tcp_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/address.rs` | 地址解析工具 | `resolve_protocol_address()`、`resolve_address()` - 统一地址解析 |
 | `src/socket.rs` | TCP Socket 配置 | `configure_tcp_socket()` |
 | `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和链接生成 |
 | `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
@@ -85,7 +85,6 @@ VLESS-Rust 是一个基于 Rust 和 Tokio 异步运行时实现的高性能 VLES
 | `src/wizard.rs` | 交互式配置向导 | `ConfigWizard`、`run()` - 引导用户创建配置 |
 | `src/service.rs` | 系统服务管理 | `install_service()`、`uninstall_service()` - 自动检测并安装 systemd/OpenRC 服务 |
 | `src/atomic_write.rs` | 原子文件写入 | `atomic_write_file()`、`atomic_write_file_with_perms()` - 安全写入文件 |
-| `src/time.rs` | 时间工具 | `UtcTime`、`utc_now_rfc3339()` - 替代 chrono 库 |
 
 ### 配置文件
 
@@ -199,15 +198,19 @@ pub struct ServerConfig {
 
 #### 3. HTTP 检测模块 (http.rs)
 
-**职责**: HTTP 请求检测和响应构建，区分 HTTP 和 VLESS 协议
+**职责**: HTTP 请求检测、工具函数和响应构建，区分 HTTP 和 VLESS 协议
 
 **检测机制**:
 - 检查数据包前缀是否为 HTTP 方法
 - 支持 GET、POST、PUT、DELETE、HEAD、OPTIONS、PATCH、TRACE
 - HTTP 请求会被拒绝，仅处理 VLESS 协议
 
+**工具函数**:
+- `extract_http_path()`: 提取 HTTP 请求路径（包含安全检查）
+- `extract_header_value()`: 提取 HTTP 头的值
+- `validate_http_headers()`: 验证 HTTP 头安全性
+
 **HTTP 响应构建**:
-- `parse_http_request()`: 解析 HTTP 请求路径和参数
 - `build_json_response()`: 构建 JSON 响应
 - `build_html_response()`: 构建 HTML 响应
 - `build_404_response()` / `build_400_response()`: 错误响应
@@ -226,7 +229,22 @@ pub struct ServerConfig {
 - 4KB 栈缓冲区处理 UDP 数据包
 - 超时控制避免空闲连接阻塞
 
-#### 5. Socket 配置模块 (socket.rs)
+#### 5. 地址解析模块 (address.rs)
+
+**职责**: 统一地址解析功能，供 TCP 和 WebSocket 模块复用
+
+**核心功能**:
+- `resolve_protocol_address()`: 从协议地址解析目标地址
+- `resolve_address()`: 解析地址字符串（域名或 IP）
+- `resolve_target_address()`: 解析目标地址（字节数组）
+
+**技术细节**:
+- 统一处理域名解析和 IP 地址转换
+- 支持域名、IPv4、IPv6 地址类型
+- 使用 Tokio 异步 DNS 解析
+- 高效的迭代器操作避免内存分配
+
+#### 6. Socket 配置模块 (socket.rs)
 
 **职责**: TCP Socket 参数配置
 
@@ -234,7 +252,7 @@ pub struct ServerConfig {
 - `configure_tcp_socket()`: 配置 TCP_NODELAY 和缓冲区大小
 - 使用 `socket2` 库设置系统 socket 参数
 
-#### 6. API 模块 (api.rs)
+#### 7. API 模块 (api.rs)
 
 **职责**: HTTP API 处理，提供信息页面和 VLESS 链接生成
 
@@ -249,7 +267,7 @@ pub struct ServerConfig {
 - 生成对应协议的 VLESS 链接
 - 返回 JSON 格式（包含原始链接和 Base64 编码）
 
-#### 7. 公网 IP 模块 (public_ip.rs)
+#### 8. 公网 IP 模块 (public_ip.rs)
 
 **职责**: 自动获取公网 IP
 
@@ -266,7 +284,7 @@ pub struct ServerConfig {
 - checkip.amazonaws.com
 - icanhazip.com
 
-#### 8. VLESS 链接模块 (vless_link.rs)
+#### 9. VLESS 链接模块 (vless_link.rs)
 
 **职责**: 生成 VLESS 协议链接
 
@@ -284,7 +302,7 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=tcp#{alias}
 vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{alias}
 ```
 
-#### 9. 配置模块 (config.rs)
+#### 10. 配置模块 (config.rs)
 
 **职责**: 配置文件解析和验证
 
@@ -312,7 +330,7 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{
 - 配置文件不存在时自动创建
 - 支持部分配置缺失
 
-#### 10. 原子写入模块 (atomic_write.rs)
+#### 11. 原子写入模块 (atomic_write.rs)
 
 **职责**: 提供原子性文件写入操作
 
@@ -326,19 +344,6 @@ vless://{uuid}@{host}:{port}?encryption=none&security=none&type=ws&path={path}#{
 - 临时文件机制确保原子性
 - 支持 Unix 权限设置
 - 完善的错误处理和提示
-
-#### 11. 时间工具模块 (time.rs)
-
-**职责**: 提供时间处理功能，替代 chrono 库
-
-**核心功能**:
-- `UtcTime`: UTC 时间结构体
-- `utc_now_rfc3339()`: 获取当前 RFC3339 格式时间
-- 手动实现 RFC3339 格式化，无外部依赖
-
-**优势**:
-- 零依赖，减小二进制体积
-- 满足项目时间格式化需求
 
 #### 12. 配置向导模块 (wizard.rs)
 
@@ -397,6 +402,13 @@ VLESS 协议处理
 - `install_service()`: 自动检测初始化系统并安装服务
 - `uninstall_service()`: 卸载服务
 - `detect_init_system()`: 检测可用的初始化系统
+- `InstallContext`: 安装上下文封装，统一安装逻辑
+
+**代码优化**:
+- 模块化设计，提取共用逻辑
+- 安装上下文封装
+- 备份和恢复机制
+- 清晰的错误处理
 
 **支持平台**:
 - **Systemd**: 无需 root 权限，用户级服务
@@ -545,6 +557,7 @@ VLESS 协议解析
    - 支持 SIGINT/SIGTERM 信号处理
    - Windows: Ctrl+C 监听
    - Unix: SIGINT 和 SIGTERM 处理
+   - 关闭信号通道通知
    - 停止接收新连接
    - 等待现有连接完成
 
@@ -560,10 +573,11 @@ VLESS 协议解析
      - `Home`: 跳转到顶部
      - `End`: 跳转到底部并重新启用自动滚动
 
-9. **依赖精简**:
-   - 移除 chrono 依赖，自实现时间格式化
-   - 减小二进制体积
-   - 降低依赖复杂度
+9. **模块化设计**:
+   - 地址解析模块独立化
+   - HTTP 工具函数复用
+   - 代码结构更清晰
+   - 降低模块间耦合
 
 ## 安全考虑
 

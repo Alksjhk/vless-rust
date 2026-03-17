@@ -3,8 +3,9 @@
 //! 处理原始 TCP 连接上的 VLESS 协议请求
 
 use crate::config::PerformanceConfig;
-use crate::protocol::{VlessRequest, VlessResponse, Command, Address};
+use crate::protocol::{VlessRequest, VlessResponse, Command};
 use crate::socket::configure_tcp_socket;
+use crate::address::resolve_protocol_address;
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use std::net::SocketAddr;
@@ -96,19 +97,7 @@ async fn handle_tcp_proxy(
     _user_email: Option<Arc<str>>,
 ) -> Result<()> {
     // 连接到目标服务器
-    let target_addr = match &request.address {
-        Address::Domain(domain) => {
-            let domain_str = std::str::from_utf8(domain)
-                .map_err(|_| anyhow!("Invalid domain encoding"))?;
-            let addr_str = format!("{}:{}", domain_str, request.port);
-            let resolved = tokio::net::lookup_host(&addr_str)
-                .await?
-                .next()
-                .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
-            resolved
-        }
-        _ => request.address.to_socket_addr(request.port)?,
-    };
+    let target_addr = resolve_protocol_address(&request.address, request.port).await?;
 
     debug!("Connecting to target: {}", target_addr);
     let mut target_stream = TcpStream::connect(target_addr).await?;
@@ -157,19 +146,7 @@ async fn handle_udp_proxy(
     _user_email: Option<Arc<str>>,
 ) -> Result<()> {
     // 解析目标地址
-    let target_addr = match &request.address {
-        Address::Domain(domain) => {
-            let domain_str = std::str::from_utf8(domain)
-                .map_err(|_| anyhow!("Invalid domain encoding"))?;
-            let addr_str = format!("{}:{}", domain_str, request.port);
-            let resolved = tokio::net::lookup_host(&addr_str)
-                .await?
-                .next()
-                .ok_or_else(|| anyhow!("Failed to resolve domain: {}", domain_str))?;
-            resolved
-        }
-        _ => request.address.to_socket_addr(request.port)?,
-    };
+    let target_addr = resolve_protocol_address(&request.address, request.port).await?;
 
     info!("Establishing UDP proxy: {:?} -> {}", client_stream.peer_addr(), target_addr);
 

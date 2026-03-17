@@ -71,13 +71,14 @@ cargo check
 
 **后端核心模块：**
 
-- `src/main.rs`: 程序入口，负责配置加载、服务器启动和 TUI 控制
+- `src/main.rs`: 程序入口，负责配置加载、服务器启动、关闭信号处理和 TUI 控制
 - `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
 - `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
-- `src/server.rs`: 服务器核心逻辑（调度器），处理连接分发
+- `src/server.rs`: 服务器核心逻辑（调度器），处理连接分发和优雅关闭
 - `src/ws.rs`: WebSocket 协议处理，支持 VLESS over WebSocket
-- `src/http.rs`: HTTP 请求检测和响应构建
+- `src/http.rs`: HTTP 请求检测、工具函数和响应构建
 - `src/tcp.rs`: TCP 协议处理，包含 TCP/UDP 代理转发
+- `src/address.rs`: 地址解析工具，统一处理域名解析和地址转换
 - `src/socket.rs`: TCP Socket 配置
 - `src/api.rs`: HTTP API 处理，提供信息页面和 VLESS 链接生成
 - `src/public_ip.rs`: 公网 IP 自动获取
@@ -87,7 +88,6 @@ cargo check
 - `src/version.rs`: 版本信息管理（包含 version_info.rs）
 - `src/service.rs`: Linux 服务管理（systemd/OpenRC）
 - `src/atomic_write.rs`: 原子文件写入工具
-- `src/time.rs`: 时间工具（替代 chrono 库）
 
 ### 关键设计模式
 
@@ -143,15 +143,16 @@ cargo check
 
 | 文件路径 | 核心功能 | 主要结构体/函数 |
 |---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动、TUI控制 | `main()` - 加载配置、启动服务器、TUI日志显示 |
+| `src/main.rs` | 程序入口、服务器启动、TUI控制 | `main()` - 加载配置、启动服务器、关闭信号处理、TUI日志显示 |
 | `src/tui.rs` | TUI 终端界面 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
 | `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
 | `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerSettings`、`UserConfig`、`PerformanceConfig` |
 | `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器调度器、连接分发 | `VlessServer`、`handle_connection()` - 根据协议类型分发到 tcp/ws 模块 |
+| `src/server.rs` | 服务器调度器、连接分发、优雅关闭 | `VlessServer`、`handle_connection()` - 根据协议类型分发到 tcp/ws 模块 |
 | `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`is_websocket_upgrade()` |
-| `src/http.rs` | HTTP 请求检测和响应构建 | `is_http_request()`、`parse_http_request()`、`build_json_response()` |
+| `src/http.rs` | HTTP 请求检测、工具函数、响应构建 | `is_http_request()`、`extract_http_path()`、`build_json_response()` |
 | `src/tcp.rs` | TCP 协议处理、代理转发 | `handle_tcp_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
+| `src/address.rs` | 地址解析工具 | `resolve_protocol_address()`、`resolve_address()` - 统一地址解析 |
 | `src/socket.rs` | TCP Socket 配置 | `configure_tcp_socket()` |
 | `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和 VLESS 链接生成 |
 | `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
@@ -159,7 +160,6 @@ cargo check
 | `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
 | `src/service.rs` | Linux 服务管理 | `install_service()`、`uninstall_service()` - systemd/OpenRC 支持 |
 | `src/atomic_write.rs` | 原子文件写入 | `atomic_write_file()`、`atomic_write_file_with_perms()` |
-| `src/time.rs` | 时间工具（内部使用） | `UtcTime`、`utc_now_rfc3339()` - 替代 chrono |
 
 ### 配置文件
 
