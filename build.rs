@@ -128,7 +128,7 @@ fn parse_toml_line(line: &str) -> Option<(String, String)> {
 /// 将版本字符串转换为 Windows 版本号 (u64)
 fn parse_version_string(version: &str) -> u64 {
     let parts: Vec<&str> = version.split('.').collect();
-    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(1) as u64;
+    let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1) as u64;
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0) as u64;
     let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0) as u64;
     let build = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0) as u64;
@@ -176,7 +176,11 @@ fn embed_windows_resources(metadata: &VersionMetadata) {
 fn generate_version_info(metadata: &VersionMetadata) {
     // 获取编译信息
     let rust_version = std::env::var("RUSTC_VERSION").unwrap_or_else(|_| "unknown".to_string());
-    let build_profile = if cfg!(debug_assertions) { "Debug" } else { "Release" };
+    let build_profile = if cfg!(debug_assertions) {
+        "Debug"
+    } else {
+        "Release"
+    };
     let build_target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
 
     // 获取构建日期
@@ -186,7 +190,6 @@ fn generate_version_info(metadata: &VersionMetadata) {
     let code = format!(
         r#"/// 编译时嵌入的版本信息
 /// 此文件由 build.rs 自动生成，请勿手动修改
-
 /// 版本信息常量结构体
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

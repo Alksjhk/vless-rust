@@ -32,15 +32,11 @@ pub fn is_websocket_upgrade(data: &[u8]) -> bool {
 
     for line in text.lines() {
         let lower = line.to_lowercase();
-        if lower.starts_with("upgrade:") {
-            if lower.contains("websocket") {
-                has_upgrade = true;
-            }
+        if lower.starts_with("upgrade:") && lower.contains("websocket") {
+            has_upgrade = true;
         }
-        if lower.starts_with("connection:") {
-            if lower.contains("upgrade") {
-                has_connection_upgrade = true;
-            }
+        if lower.starts_with("connection:") && lower.contains("upgrade") {
+            has_connection_upgrade = true;
         }
         if lower.starts_with("sec-websocket-key:") {
             has_ws_key = true;
@@ -165,6 +161,7 @@ pub async fn handle_ws_upgrade(
 }
 
 /// WebSocket 连接处理结果
+#[allow(clippy::large_enum_variant)]
 pub enum WsConnectionResult {
     /// WebSocket 升级成功，返回流和首条消息
     UpgradeSuccess(tokio_tungstenite::WebSocketStream<TcpStream>, Bytes),
@@ -292,13 +289,11 @@ pub async fn handle_ws_proxy(
 ) -> Result<()> {
     info!("Starting WebSocket proxy for user {} from {}", request.uuid, client_addr);
 
-    // 解析目标地址
     let target_addr = resolve_protocol_address(&request.address, request.port).await?;
 
     debug!("Connecting to target: {}", target_addr);
     let mut target_stream = tokio::net::TcpStream::connect(target_addr).await?;
 
-    // 配置目标连接的 TCP 参数
     configure_tcp_socket(
         &target_stream,
         perf_config.tcp_recv_buffer,
@@ -306,7 +301,6 @@ pub async fn handle_ws_proxy(
         perf_config.tcp_nodelay,
     )?;
 
-    // 如果有初始数据，先发送给目标服务器
     if !initial_data.is_empty() {
         target_stream.write_all(&initial_data).await?;
     }
@@ -316,7 +310,6 @@ pub async fn handle_ws_proxy(
 
     let (mut target_read, mut target_write) = target_stream.into_split();
 
-    // 任务1：WebSocket -> 目标
     let ws_to_target = tokio::spawn(async move {
         loop {
             match ws_receiver.next().await {
@@ -348,10 +341,10 @@ pub async fn handle_ws_proxy(
                 _ => {}
             }
         }
+        debug!("WebSocket receive loop ended");
         let _ = target_write.shutdown().await;
     });
 
-    // 任务2：目标 -> WebSocket
     let target_to_ws = tokio::spawn(async move {
         let mut buffer = [0u8; 8 * 1024];
 

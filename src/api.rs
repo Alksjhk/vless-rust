@@ -138,17 +138,26 @@ async fn handle_info_page(
 
     let ws_path_info = if config.protocol == ProtocolType::WebSocket {
         format!("<tr><td>WS Path</td><td><code>{}</code></td></tr>",
-                config.ws_path.as_deref().unwrap_or("/"))
+                html_escape(config.ws_path.as_deref().unwrap_or("/")))
     } else {
         String::new()
     };
+
+    // HTML 转义函数
+    fn html_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#x27;")
+    }
 
     let html = format!(r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{product_name}</title>
+    <title>{}</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; padding: 40px 20px; color: #e0e0e0; }}
@@ -172,35 +181,39 @@ async fn handle_info_page(
 <body>
     <div class="container">
         <div class="card">
-            <h1>{product_name}</h1>
-            <p class="version">v{version}</p>
+            <h1>{}</h1>
+            <p class="version">v{}</p>
             <table>
-                <tr><td>Author</td><td>{author}</td></tr>
-                <tr><td>IP</td><td><code>{ip}</code></td></tr>
-                <tr><td>Port</td><td><code>{port}</code></td></tr>
-                <tr><td>Protocol</td><td><code>{protocol}</code></td></tr>
+                <tr><td>Author</td><td>{}</td></tr>
+                <tr><td>IP</td><td><code>{}</code></td></tr>
+                <tr><td>Port</td><td><code>{}</code></td></tr>
+                <tr><td>Protocol</td><td><code>{}</code></td></tr>
                 {ws_path_info}
             </table>
         </div>
         <div class="card api-section">
             <p class="api-title">Get VLESS Link</p>
             <div class="api-box">
-                <p class="api-url">http://{ip}:{port}/?email=your_email</p>
+                <p class="api-url">http://{}:{}/?email=your_email</p>
             </div>
             <p class="api-note">Replace <code>your_email</code> with the email configured in config.json</p>
         </div>
-        <p class="footer">{copyright}</p>
+        <p class="footer">Powered by {} v{}</p>
     </div>
 </body>
 </html>"#,
-        product_name = VERSION_INFO.product_name,
-        version = VERSION_INFO.version,
-        author = VERSION_INFO.author,
-        ip = config.public_ip,
-        port = config.port,
-        protocol = protocol_str,
-        ws_path_info = ws_path_info,
-        copyright = VERSION_INFO.legal_copyright,
+        html_escape(VERSION_INFO.product_name),
+        html_escape(VERSION_INFO.product_name),
+        VERSION_INFO.version,
+        html_escape(VERSION_INFO.author),
+        html_escape(&config.public_ip),
+        config.port,
+        html_escape(protocol_str),
+        // ws_path_info is embedded in string, not a format parameter
+        html_escape(&config.public_ip),
+        config.port,
+        html_escape(VERSION_INFO.product_name),
+        VERSION_INFO.version,
     );
 
     let response = build_html_response(&html);

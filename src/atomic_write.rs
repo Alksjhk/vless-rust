@@ -1,6 +1,6 @@
-use std::path::Path;
-use std::io::{self, Write};
 use anyhow::Result;
+use std::io::{self, Write};
+use std::path::Path;
 
 /// 原子写入文件
 ///
@@ -125,11 +125,7 @@ fn format_file_error(operation: &str, path: &Path, error: io::Error) -> anyhow::
 pub fn is_file_writable(path: &Path) -> bool {
     if path.exists() {
         // 文件已存在，尝试打开进行追加
-        std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(path)
-            .is_ok()
+        std::fs::OpenOptions::new().append(true).open(path).is_ok()
     } else {
         // 文件不存在，尝试创建临时文件
         // 使用 .tmp 后缀与 atomic_write_file 保持一致
@@ -155,7 +151,10 @@ mod tests {
 
         // 第一次写入
         atomic_write_file(&file_path, "Hello, World!").unwrap();
-        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "Hello, World!");
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "Hello, World!"
+        );
 
         // 覆盖写入
         atomic_write_file(&file_path, "New content").unwrap();

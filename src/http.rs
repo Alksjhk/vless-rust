@@ -1,5 +1,5 @@
 //! HTTP 请求检测和响应构建模块
-//! 
+//!
 //! 用于区分 HTTP 请求和 VLESS 协议请求，并构建 HTTP 响应
 
 use std::collections::HashMap;
@@ -21,8 +21,10 @@ pub fn is_http_request(data: &[u8]) -> bool {
 
     // HTTP/1.x 方法
     let prefix = &data[..4];
-    matches!(prefix, b"GET " | b"POST" | b"HEAD" | b"PUT " | b"DELE" | b"OPTI" | b"PATC" | b"CONN" | b"TRAC")
-        || (data.len() >= 4 && &data[..4] == b"POST")
+    matches!(
+        prefix,
+        b"GET " | b"POST" | b"HEAD" | b"PUT " | b"DELE" | b"OPTI" | b"PATC" | b"CONN" | b"TRAC"
+    ) || (data.len() >= 4 && &data[..4] == b"POST")
 }
 
 /// HTTP 查询参数
@@ -35,35 +37,35 @@ pub struct HttpQuery {
 }
 
 /// 解析 HTTP 请求
-/// 
+///
 /// 从 HTTP 请求数据中提取路径和查询参数
-/// 
+///
 /// # Arguments
 /// * `data` - HTTP 请求数据
-/// 
+///
 /// # Returns
 /// * `Option<HttpQuery>` - 解析结果
 pub fn parse_http_request(data: &[u8]) -> Option<HttpQuery> {
     // 将数据转换为字符串
     let request_str = std::str::from_utf8(data).ok()?;
-    
+
     // 解析请求行: "GET /path?param=value HTTP/1.1"
     let first_line = request_str.lines().next()?;
     let parts: Vec<&str> = first_line.split_whitespace().collect();
-    
+
     if parts.len() < 2 {
         return None;
     }
-    
+
     let uri = parts[1];
-    
+
     // 分离路径和查询参数
     let (path, query_string) = if let Some(pos) = uri.find('?') {
         (&uri[..pos], &uri[pos + 1..])
     } else {
         (uri, "")
     };
-    
+
     // 解析查询参数
     let mut params = HashMap::new();
     if !query_string.is_empty() {
@@ -75,7 +77,7 @@ pub fn parse_http_request(data: &[u8]) -> Option<HttpQuery> {
             }
         }
     }
-    
+
     Some(HttpQuery {
         path: path.to_string(),
         params,
@@ -86,9 +88,20 @@ pub fn parse_http_request(data: &[u8]) -> Option<HttpQuery> {
 fn build_response(status: u16, status_text: &str, content_type: &str, body: &str) -> Vec<u8> {
     let content_length = body.len();
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nX-XSS-Protection: 1; mode=block\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\n\
+Content-Type: {}\r\n\
+Content-Length: {}\r\n\
+Connection: close\r\n\
+X-Content-Type-Options: nosniff\r\n\
+X-Frame-Options: DENY\r\n\
+X-XSS-Protection: 1; mode=block\r\n\
+Referrer-Policy: no-referrer\r\n\
+Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline' 'unsafe-hashes'; script-src 'none'\r\n\
+\r\n\
+{}",
         status, status_text, content_type, content_length, body
-    ).into_bytes()
+    )
+    .into_bytes()
 }
 
 /// 构建 JSON 响应
@@ -129,7 +142,9 @@ pub fn extract_http_path(data: &[u8]) -> Option<String> {
             if parts.len() >= 2 {
                 let path = parts[1].to_string();
                 // 安全检查：防止路径遍历攻击
-                let decoded_path = urlencoding::decode(&path).unwrap_or_default();
+                let decoded_path = urlencoding::decode(&path)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| path.clone());
                 if decoded_path.contains("..") || decoded_path.contains('\\') {
                     return None;
                 }

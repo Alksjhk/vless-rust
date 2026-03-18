@@ -124,11 +124,13 @@ async fn handle_tcp_proxy(
     let (mut target_read, mut target_write) = target_stream.into_split();
 
     let client_to_target = tokio::spawn(async move {
-        let _ = tokio::io::copy(&mut client_read, &mut target_write).await;
+        let result = tokio::io::copy(&mut client_read, &mut target_write).await;
+        debug!("Client to target copy finished: {:?}", result);
     });
 
     let target_to_client = tokio::spawn(async move {
-        let _ = tokio::io::copy(&mut target_read, &mut client_write).await;
+        let result = tokio::io::copy(&mut target_read, &mut client_write).await;
+        debug!("Target to client copy finished: {:?}", result);
     });
 
     // 等待两个任务完成

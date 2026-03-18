@@ -189,7 +189,7 @@ async fn main() -> Result<()> {
         }
         info!("  Users: {}", config.users.len());
 
-        run_server(config, public_ip).await.map_err(|e| e.into())
+        run_server(config, public_ip).await
     }
 }
 
@@ -354,48 +354,43 @@ fn run_tui_with_channel(
 
         // 处理事件
         if event::poll(Duration::from_millis(50))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => {
-                                break Ok(());
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                auto_scroll = false; // 用户手动滚动时禁用自动滚动
-                                // 计算最大滚动位置
-                                let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
-                                let max_scroll = log_entries.len().saturating_sub(log_height);
-                                scroll_offset = scroll_offset.saturating_add(1).min(max_scroll);
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                auto_scroll = false;
-                                scroll_offset = scroll_offset.saturating_sub(1);
-                            }
-                            KeyCode::PageDown => {
-                                auto_scroll = false;
-                                let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
-                                let max_scroll = log_entries.len().saturating_sub(log_height);
-                                scroll_offset = scroll_offset.saturating_add(10).min(max_scroll);
-                            }
-                            KeyCode::PageUp => {
-                                auto_scroll = false;
-                                scroll_offset = scroll_offset.saturating_sub(10);
-                            }
-                            KeyCode::Home => {
-                                auto_scroll = false;
-                                scroll_offset = 0;
-                            }
-                            KeyCode::End => {
-                                auto_scroll = true; // End键重新启用自动滚动
-                                // 设置为 len() - log_height 以确保显示最新日志
-                                scroll_offset = log_entries.len().saturating_sub(1);
-                            }
-                            _ => {}
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            break Ok(());
                         }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            auto_scroll = false;
+                            let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
+                            let max_scroll = log_entries.len().saturating_sub(log_height);
+                            scroll_offset = scroll_offset.saturating_add(1).min(max_scroll);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            auto_scroll = false;
+                            scroll_offset = scroll_offset.saturating_sub(1);
+                        }
+                        KeyCode::PageDown => {
+                            auto_scroll = false;
+                            let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
+                            let max_scroll = log_entries.len().saturating_sub(log_height);
+                            scroll_offset = scroll_offset.saturating_add(10).min(max_scroll);
+                        }
+                        KeyCode::PageUp => {
+                            auto_scroll = false;
+                            scroll_offset = scroll_offset.saturating_sub(10);
+                        }
+                        KeyCode::Home => {
+                            auto_scroll = false;
+                            scroll_offset = 0;
+                        }
+                        KeyCode::End => {
+                            auto_scroll = true;
+                            scroll_offset = log_entries.len().saturating_sub(1);
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
         }
 
@@ -512,12 +507,13 @@ fn build_header_lines(status_info: &version::ServerStatusInfo) -> Vec<String> {
     // 使用公共函数格式化缓冲区大小
     let buffer_str = version::format_buffer_size(status_info.buffer_size);
 
-    let mut lines = Vec::new();
-    lines.push(product_line);
-    lines.push(author_line);
-    lines.push(desc_line);
-    lines.push(copyright_line);
-    lines.push(String::new()); // 空行分隔
+    let mut lines = vec![
+        product_line,
+        author_line,
+        desc_line,
+        copyright_line,
+        String::new(),
+    ];
     
     // 公网 IP 行（如果可用）
     if let Some(ref public_ip) = status_info.public_ip {

@@ -238,7 +238,7 @@ impl VlessServer {
                     ws_stream,
                     first_message,
                     &users,
-                    |uuid| user_emails.get(&uuid).and_then(|e| e.clone()),
+                    |uuid| user_emails.get(uuid).and_then(|e| e.clone()),
                     performance_config,
                     client_addr,
                 ).await
