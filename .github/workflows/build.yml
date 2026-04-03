@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # 提取版本号并判断是否需要构建
+  # 提取版本号并判断是否需要发布 Release（仅 push to main）
   extract-version:
     name: Extract Version from Commit
     runs-on: ubuntu-latest
@@ -20,7 +20,7 @@ jobs:
       release_body: ${{ steps.version.outputs.release_body }}
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         fetch-depth: 0
 
@@ -29,32 +29,23 @@ jobs:
       run: |
         echo "=== Analyzing commits since last release ==="
 
-        # 获取最新的 Release 标签（如果存在）
         LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
         if [ -n "$LATEST_TAG" ]; then
           echo "Latest release tag: $LATEST_TAG"
-          # 获取自上次 Release 之后的提交
           COMMITS=$(git log $LATEST_TAG..HEAD --pretty=format:"%s" --reverse)
         else
           echo "No previous release found"
-          # 获取所有提交
           COMMITS=$(git log --pretty=format:"%s" --reverse)
         fi
 
         echo "Commits analyzed:"
         echo "$COMMITS"
-        echo ""
 
-        # 从提交信息中查找最新版本号（格式：x.x.x 或 x.x.x-xxxx）
-        # 查找最后一个匹配的版本号（最新版本），支持带后缀的版本号
-        # 版本号格式：x.x.x，可选后缀 -xxxx（如 -t, -alpha, -beta, -test 等）
         VERSION_LINE=$(echo "$COMMITS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?( |$)' | tail -n 1 || echo "")
 
         if [ -n "$VERSION_LINE" ]; then
-          # 提取完整版本号（包括后缀）
           VERSION=$(echo "$VERSION_LINE" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?')
-          # 提取版本号后面的内容（去除版本号和空格）
           RELEASE_BODY=$(echo "$VERSION_LINE" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)? ?//')
           echo "✓ Found version in commit: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -79,7 +70,6 @@ jobs:
           exit 0
         fi
 
-        # 检查该版本的 Release 是否已存在
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -96,8 +86,14 @@ jobs:
   build:
     name: Build for ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    needs: extract-version
-    if: needs.extract-version.outputs.should_build == 'true'
+    # PR 时直接构建验证；push to main 时等 extract-version 决定是否需要构建
+    needs: [ extract-version ]
+    if: |
+      always() && (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        needs.extract-version.outputs.should_build == 'true'
+      )
     strategy:
       fail-fast: false
       matrix:
@@ -124,78 +120,89 @@ jobs:
             asset_name: vless-rust-linux-armv7
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
 
-    # Linux musl 需要安装 musl 工具链和交叉编译工具
-    - name: Install musl tools (Linux)
-      if: startsWith(matrix.target, 'x86_64-unknown-linux-musl')
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+    - name: Cache cargo-zigbuild binary
+      if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/cargo-zigbuild
+        key: cargo-zigbuild-${{ runner.os }}
+
+    # x86_64 musl: 原生工具链
+    - name: Install musl tools (x86_64 Linux)
+      if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
         sudo apt-get update
         sudo apt-get install -y musl-tools musl-dev
 
-    # Linux ARM musl 交叉编译工具
-    - name: Install ARM musl cross-compilation tools
-      if: startsWith(matrix.target, 'aarch64-unknown-linux-musl') || matrix.target == 'armv7-unknown-linux-musleabihf'
+    # ARM musl 交叉编译：使用 zig 作为链接器（自带 musl libc，无需额外工具链）
+    - name: Install zig and cargo-zigbuild (ARM musl)
+      if: matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-
-        # 为 ARM musl 目标设置链接器环境变量
-        if [ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]; then
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-        elif [ "${{ matrix.target }}" == "armv7-unknown-linux-musleabihf" ]; then
-          echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
-          echo "CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+        ZIG_VERSION="0.13.0"
+        ZIG_TARBALL="zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+        curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}" -o /tmp/zig.tar.xz
+        sudo tar -xf /tmp/zig.tar.xz -C /usr/local
+        sudo ln -sf "/usr/local/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+        zig version
+        if ! command -v cargo-zigbuild &>/dev/null; then
+          cargo install cargo-zigbuild
         fi
 
     # 编译 Rust 项目
     - name: Build release binary
       shell: bash
       run: |
-        # Linux musl 目标启用静态链接
-        if [[ "${{ matrix.target }}" == *"musl"* ]]; then
-          export RUSTFLAGS="-C target-feature=+crt-static $RUSTFLAGS"
+        if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" || "${{ matrix.target }}" == "armv7-unknown-linux-musleabihf" ]]; then
+          cargo zigbuild --release --target ${{ matrix.target }}
+        else
+          cargo build --release --target ${{ matrix.target }}
         fi
-        cargo build --release --target ${{ matrix.target }}
 
     # 验证静态链接（仅 Linux）
     - name: Verify static linking (Linux)
       if: startsWith(matrix.os, 'ubuntu')
       run: |
         binary="target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
-        echo "=== Checking binary: $binary ==="
+        echo "=== file output ==="
         file "$binary"
         echo ""
-        echo "=== Dynamic library dependencies ==="
-        ldd "$binary" || echo "ldd failed (not a dynamic executable or static binary)"
+        echo "=== ldd output ==="
+        ldd "$binary" 2>&1 || true
         echo ""
-        echo "=== Check if truly static ==="
         if ldd "$binary" 2>&1 | grep -q "not a dynamic executable"; then
           echo "✓ Binary is statically linked"
-        elif ldd "$binary" 2>&1 | grep -E "libc\.so|libpthread\.so|libdl\.so"; then
-          echo "⚠ Warning: Binary may have dynamic glibc dependencies"
-          ldd "$binary"
+        elif ldd "$binary" 2>&1 | grep -qE "libc\.so|libpthread\.so|libdl\.so"; then
+          echo "✗ ERROR: Binary has dynamic glibc dependencies"
+          exit 1
         else
-          echo "✓ Binary appears to be statically linked or uses musl"
+          echo "✓ Binary appears statically linked (musl)"
         fi
 
-    # 显示二进制信息
     - name: Display binary info
       shell: bash
       run: |
         binary="target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
-        echo "=== Binary information ==="
         file "$binary"
-        echo ""
-        echo "=== Binary size ==="
         ls -lh "$binary"
-        echo ""
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -205,65 +212,47 @@ jobs:
 
   release:
     name: Create Release with Multi-Platform Binaries
-    needs: [extract-version, build]
+    needs: [ extract-version, build ]
     runs-on: ubuntu-latest
-    if: needs.extract-version.outputs.should_build == 'true'
+    if: |
+      always() &&
+      needs.extract-version.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.extract-version.outputs.should_build == 'true'
     permissions:
       contents: write
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
 
-    - name: Display structure of downloaded files
-      run: |
-        echo "=== Artifacts directory structure ==="
-        ls -R artifacts
-        echo ""
-        echo "=== Finding all executables ==="
-        find artifacts -type f -executable -o -name "*.exe"
-
     - name: Prepare release assets
       shell: bash
       run: |
         mkdir -p release
-        echo "=== Processing artifacts ==="
-
         for dir in artifacts/*/; do
           if [ -d "$dir" ]; then
             dirname=$(basename "$dir")
-            echo "Processing: $dirname"
-
             for file in "$dir"*; do
               if [ -f "$file" ]; then
-                # 获取文件名
-                filename=$(basename "$file")
-
-                # 根据平台确定扩展名
                 if [[ "$dirname" == *"windows"* ]]; then
                   ext=".exe"
                 else
                   ext=""
                 fi
-
-                # 目标文件名
                 target_name="${dirname}${ext}"
-
-                echo "  Copying: $filename -> $target_name"
                 cp "$file" "release/$target_name"
                 chmod +x "release/$target_name" 2>/dev/null || true
+                echo "  $target_name ($(ls -lh "release/$target_name" | awk '{print $5}'))"
               fi
             done
           fi
         done
-
-        echo ""
-        echo "=== Release files ==="
         ls -lh release/
 
     - name: Generate release notes
@@ -271,7 +260,6 @@ jobs:
         VERSION="${{ needs.extract-version.outputs.version }}"
         RELEASE_BODY="${{ needs.extract-version.outputs.release_body }}"
 
-        # 如果有 commit 消息内容，使用它；否则使用默认内容
         if [ -n "$RELEASE_BODY" ] && [ "$RELEASE_BODY" != "none" ]; then
           cat > release_notes.md << EOF
         ## VLESS-Rust $VERSION
@@ -288,32 +276,17 @@ jobs:
 
         ### 下载说明
 
-        根据您的系统选择对应的文件：
-
-        - **Windows AMD64**: `vless-rust-windows-amd64.exe` - Intel/AMD 64位 Windows
-        - **Linux AMD64**: `vless-rust-linux-amd64` - x86_64 架构 Linux（通用）
-        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux（树莓派 4+、云服务器等）
-        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux（树莓派 3 及以下）
-
-        ### 使用方法
-
-        1. 下载对应平台的二进制文件
-        2. 添加执行权限（Linux/macOS）：`chmod +x vless-rust-*`
-        3. 运行：`./vless-rust-xxx` 或 `vless-rust-xxx.exe`
-        4. 首次运行会自动生成 `config.json` 配置文件
-
-        ### 验证静态链接
-
-        Linux 用户可以使用以下命令验证：
-        \`\`\`bash
-        file vless-rust-xxx
-        ldd vless-rust-xxx 2>&1 | grep "not a dynamic" && echo "✓ 静态链接"
-        \`\`\`
+        | 文件 | 平台 |
+        |------|------|
+        | \`vless-rust-windows-amd64.exe\` | Windows x86_64 |
+        | \`vless-rust-linux-amd64\` | Linux x86_64 |
+        | \`vless-rust-linux-arm64\` | Linux ARM64（树莓派 4+） |
+        | \`vless-rust-linux-armv7\` | Linux ARMv7（树莓派 3） |
 
         ### 系统要求
 
-        - **Windows**: Windows 7 或更高版本
-        - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
+        - **Windows**: Windows 7+
+        - **Linux**: 内核 3.2+（任何发行版）
         EOF
         else
           cat > release_notes.md << EOF
@@ -327,39 +300,22 @@ jobs:
 
         ### 下载说明
 
-        根据您的系统选择对应的文件：
-
-        - **Windows AMD64**: `vless-rust-windows-amd64.exe` - Intel/AMD 64位 Windows
-        - **Linux AMD64**: `vless-rust-linux-amd64` - x86_64 架构 Linux（通用）
-        - **Linux ARM64**: `vless-rust-linux-arm64` - ARM 64位 Linux（树莓派 4+、云服务器等）
-        - **Linux ARMv7**: `vless-rust-linux-armv7` - ARM 32位 Linux（树莓派 3 及以下）
-
-        ### 使用方法
-
-        1. 下载对应平台的二进制文件
-        2. 添加执行权限（Linux/macOS）：`chmod +x vless-rust-*`
-        3. 运行：`./vless-rust-xxx` 或 `vless-rust-xxx.exe`
-        4. 首次运行会自动生成 `config.json` 配置文件
-
-        ### 验证静态链接
-
-        Linux 用户可以使用以下命令验证：
-        \`\`\`bash
-        file vless-rust-xxx
-        ldd vless-rust-xxx 2>&1 | grep "not a dynamic" && echo "✓ 静态链接"
-        \`\`\`
+        | 文件 | 平台 |
+        |------|------|
+        | \`vless-rust-windows-amd64.exe\` | Windows x86_64 |
+        | \`vless-rust-linux-amd64\` | Linux x86_64 |
+        | \`vless-rust-linux-arm64\` | Linux ARM64（树莓派 4+） |
+        | \`vless-rust-linux-armv7\` | Linux ARMv7（树莓派 3） |
 
         ### 系统要求
 
-        - **Windows**: Windows 7 或更高版本
-        - **Linux**: 内核 3.2+ (任何发行版：Alpine、Ubuntu、CentOS、Debian、Arch 等)
+        - **Windows**: Windows 7+
+        - **Linux**: 内核 3.2+（任何发行版）
         EOF
         fi
 
-        cat release_notes.md
-
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ needs.extract-version.outputs.tag_name }}
         name: Release ${{ needs.extract-version.outputs.version }}
@@ -367,7 +323,6 @@ jobs:
         body_path: release_notes.md
         draft: false
         prerelease: false
-        generate_release_notes: true
         fail_on_unmatched_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
