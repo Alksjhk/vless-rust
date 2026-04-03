@@ -1,6 +1,6 @@
-use std::io::{self, Write};
+use crate::config::{Config, ProtocolType, ServerSettings, UserConfig};
 use anyhow::Result;
-use crate::config::{Config, UserConfig, ServerSettings, ProtocolType};
+use std::io::{self, Write};
 use uuid::Uuid;
 
 /// 交互式配置向导
@@ -32,7 +32,12 @@ impl ConfigWizard {
 
         // 创建配置
         let config = Config {
-            server: ServerSettings { listen, port, protocol, ws_path },
+            server: ServerSettings {
+                listen,
+                port,
+                protocol,
+                ws_path,
+            },
             users,
             performance: Default::default(),
         };
@@ -224,7 +229,9 @@ impl ConfigWizard {
                     match Uuid::parse_str(uuid_input) {
                         Ok(uuid) => break uuid.to_string(),
                         Err(_) => {
-                            println!("  ⚠ 无效的 UUID 格式，示例: 550e8400-e29b-41d4-a716-446655440000");
+                            println!(
+                                "  ⚠ 无效的 UUID 格式，示例: 550e8400-e29b-41d4-a716-446655440000"
+                            );
                         }
                     }
                 } else {
@@ -257,7 +264,10 @@ impl ConfigWizard {
 
             // 验证 UUID 唯一性
             if let Some(existing) = existing_users.iter().find(|u| u.uuid == uuid) {
-                println!("  ✗ 错误：UUID 与现有用户重复: {}", existing.email.as_deref().unwrap_or("未命名"));
+                println!(
+                    "  ✗ 错误：UUID 与现有用户重复: {}",
+                    existing.email.as_deref().unwrap_or("未命名")
+                );
                 println!("  请重新输入不同的 UUID\n");
                 continue; // 重新开始循环，而不是递归
             }
@@ -266,7 +276,10 @@ impl ConfigWizard {
             println!("  UUID: {}", uuid);
             println!("  Email: {}", email);
 
-            return Ok(UserConfig { uuid, email: Some(email) });
+            return Ok(UserConfig {
+                uuid,
+                email: Some(email),
+            });
         }
     }
 }

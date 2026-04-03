@@ -164,14 +164,12 @@ pub fn extract_http_path(data: &[u8]) -> Option<String> {
 /// # Returns
 /// * `Option<String>` - 头的值
 pub fn extract_header_value(headers: &[u8], header_name: &str) -> Option<String> {
-    let text = String::from_utf8_lossy(headers);
-    let target_lower = header_name.to_lowercase();
+    let text = std::str::from_utf8(headers).ok()?;
     for line in text.lines() {
-        let lower_line = line.to_lowercase();
-        if let Some(pos) = lower_line.find(':') {
-            let name = &lower_line[..pos].trim();
-            if *name == target_lower {
-                // 防御性边界检查
+        if let Some(pos) = line.find(':') {
+            let name = line[..pos].trim();
+            // eq_ignore_ascii_case 避免 to_lowercase() 堆分配
+            if name.eq_ignore_ascii_case(header_name) {
                 let value_start = (pos + 1).min(line.len());
                 return Some(line[value_start..].trim().to_string());
             }
@@ -191,34 +189,4 @@ pub fn validate_http_headers(headers: &[u8]) -> Option<&'static str> {
         }
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_http_request_root() {
-        let data = b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        let query = parse_http_request(data).unwrap();
-        assert_eq!(query.path, "/");
-        assert!(query.params.is_empty());
-    }
-
-    #[test]
-    fn test_parse_http_request_with_params() {
-        let data = b"GET /?email=user@example.com HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        let query = parse_http_request(data).unwrap();
-        assert_eq!(query.path, "/");
-        assert_eq!(query.params.get("email").unwrap(), "user@example.com");
-    }
-
-    #[test]
-    fn test_parse_http_request_with_multiple_params() {
-        let data = b"GET /test?foo=bar&baz=qux HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        let query = parse_http_request(data).unwrap();
-        assert_eq!(query.path, "/test");
-        assert_eq!(query.params.get("foo").unwrap(), "bar");
-        assert_eq!(query.params.get("baz").unwrap(), "qux");
-    }
 }

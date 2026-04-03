@@ -20,4 +20,6 @@ plan.md
 
 # 编译时生成的版本信息文件
 src/version_info.rs
+.sisyphus
 
+assets/*.svg

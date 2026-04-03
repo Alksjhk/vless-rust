@@ -1,30 +1,32 @@
-mod protocol;
-mod server;
+mod address;
+mod api;
+mod atomic_write;
 mod config;
 mod http;
-mod wizard;
-mod ws;
-mod version;
-mod tui;
+mod protocol;
 mod public_ip;
-mod vless_link;
+mod server;
+mod service;
 mod socket;
 mod tcp;
-mod api;
-mod service;
-mod atomic_write;
-mod address;
+mod tui;
+mod version;
+mod vless_link;
+mod wizard;
+mod ws;
+
+use crate::config::Config;
+use crate::server::{ServerConfig, VlessServer};
 
 use anyhow::Result;
-use config::Config;
-use server::{ServerConfig, VlessServer};
+
 use std::env;
-use tokio::signal;
-use tracing::{info, error};
 use std::sync::mpsc;
 use std::thread;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+
+use tokio::signal;
+
+use tracing::{error, info};
 use tracing_subscriber::util::SubscriberInitExt;
 
 // 使用 mimalloc 作为全局内存分配器，提升内存分配性能
@@ -61,15 +63,15 @@ async fn main() -> Result<()> {
     }
 
     // 读取配置文件路径（跳过 args[0]，它是可执行文件路径）
-    let config_path = args.iter()
-        .skip(1)  // 跳过 args[0]（可执行文件路径）
+    let config_path = args
+        .iter()
+        .skip(1) // 跳过 args[0]（可执行文件路径）
         .find(|p| !p.starts_with("--"))
         .cloned()
         .unwrap_or_else(|| "config.json".to_string());
 
     // 检查是否禁用 TUI（可通过 --no-tui 参数或环境变量）
-    let use_tui = !args.iter().any(|a| a == "--no-tui")
-        && env::var("DISABLE_TUI").is_err();
+    let use_tui = !args.iter().any(|a| a == "--no-tui") && env::var("DISABLE_TUI").is_err();
 
     // 加载配置（不输出日志）
     let (config, config_messages) = match std::fs::read_to_string(&config_path) {
@@ -80,7 +82,7 @@ async fn main() -> Result<()> {
         Err(_) => {
             let mut messages = vec![
                 format!("Config file not found at {}", config_path),
-                "Starting configuration wizard...".to_string()
+                "Starting configuration wizard...".to_string(),
             ];
             let config = wizard::ConfigWizard::run()?;
             let json = config.to_json()?;
@@ -89,8 +91,9 @@ async fn main() -> Result<()> {
             atomic_write::atomic_write_file_with_perms(
                 std::path::Path::new(&config_path),
                 &json,
-                0o600 // rw-------
-            ).map_err(|e| anyhow::anyhow!("Failed to save config file: {}", e))?;
+                0o600, // rw-------
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to save config file: {}", e))?;
 
             // 在 Unix 系统上设置配置文件权限为只有所有者可读写
             #[cfg(unix)]
@@ -138,35 +141,28 @@ async fn main() -> Result<()> {
     };
 
     if use_tui {
-        // 创建日志通信通道
         let (log_tx, log_rx) = mpsc::channel();
 
-        // 初始化日志到 TUI
         init_tui_logging(log_tx);
 
-        // 创建停止标志
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // 在后台线程运行服务器
+        // 在当前 Runtime 上 spawn 服务器任务，避免创建第二个 Runtime
         let config_clone = config.clone();
-        let shutdown_flag_clone = shutdown_flag.clone();
         let public_ip_clone = public_ip.clone();
-        let server_handle = thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create Tokio runtime - this is a fatal error");
-            let _ = rt.block_on(async {
-                run_server_with_flag(config_clone, shutdown_flag_clone, public_ip_clone).await
-            });
+        let server_handle = tokio::spawn(async move {
+            let _ = run_server(config_clone, Some(shutdown_rx), public_ip_clone).await;
         });
 
-        // 在主线程运行 TUI
-        let result = run_tui_with_channel(log_rx, &server_status);
+        // TUI 在独立线程运行（阻塞式终端 I/O），错误转 String 以满足 Send 约束
+        let tui_handle = thread::spawn(move || {
+            run_tui_with_channel(log_rx, &server_status).map_err(|e| e.to_string())
+        });
 
-        // 通知服务器停止
-        shutdown_flag.store(true, Ordering::SeqCst);
+        let result = tui_handle.join().map_err(|_| anyhow::anyhow!("TUI thread panicked"))?;
 
-        // 等待服务器线程结束
-        let _ = server_handle.join();
+        let _ = shutdown_tx.send(true);
+        let _ = server_handle.await;
 
         result.map_err(|e| anyhow::anyhow!("{}", e))
     } else {
@@ -189,22 +185,19 @@ async fn main() -> Result<()> {
         }
         info!("  Users: {}", config.users.len());
 
-        run_server(config, public_ip).await
+        run_server(config, None, public_ip).await
     }
 }
 
 /// 运行服务器
-async fn run_server(config: Config, public_ip: Option<String>) -> Result<()> {
-    run_server_with_flag(config, Arc::new(AtomicBool::new(false)), public_ip).await
-}
-
-/// 运行服务器（带停止标志）
-async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, public_ip: Option<String>) -> Result<()> {
-    // 创建服务器配置
+async fn run_server(
+    config: Config,
+    mut shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    public_ip: Option<String>,
+) -> Result<()> {
     let bind_addr = config.bind_addr()?;
     let port = config.server.port;
 
-    // 添加用户及邮箱信息
     let mut server_config = ServerConfig::new(
         bind_addr,
         config.server.protocol,
@@ -217,29 +210,35 @@ async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, pu
         if let Ok(uuid) = uuid::Uuid::parse_str(&user.uuid) {
             let email = user.email.clone();
             server_config.add_user_with_email(uuid, email.clone());
-            info!("  Added user: {} ({})", uuid, email.as_deref().unwrap_or("no email"));
+            info!(
+                "  Added user: {} ({})",
+                uuid,
+                email.as_deref().unwrap_or("no email")
+            );
         }
     }
 
-    // 启动服务器
     let performance_config = config.performance.clone();
-
-    // 创建关闭信号通道
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
-    let server = VlessServer::new(server_config, performance_config)
-        .with_shutdown(shutdown_tx.clone());
+    let server =
+        VlessServer::new(server_config, performance_config).with_shutdown(shutdown_tx.clone());
 
     info!("Starting VLESS server...");
 
-    // 创建优雅关闭信号处理器
+    #[cfg(unix)]
+    let (mut sigint, mut sigterm) = {
+        use tokio::signal::unix::{signal, SignalKind};
+        let sigint = signal(SignalKind::interrupt())
+            .map_err(|e| anyhow::anyhow!("Failed to register SIGINT handler: {}", e))?;
+        let sigterm = signal(SignalKind::terminate())
+            .map_err(|e| anyhow::anyhow!("Failed to register SIGTERM handler: {}", e))?;
+        (sigint, sigterm)
+    };
+
     let shutdown = async {
-        // 等待 SIGINT (Ctrl+C) 或 SIGTERM
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{signal, SignalKind};
-            let mut sigint = signal(SignalKind::interrupt()).unwrap();
-            let mut sigterm = signal(SignalKind::terminate()).unwrap();
             tokio::select! {
                 _ = sigint.recv() => {
                     info!("Received SIGINT, initiating graceful shutdown...");
@@ -251,24 +250,20 @@ async fn run_server_with_flag(config: Config, shutdown_flag: Arc<AtomicBool>, pu
         }
         #[cfg(not(unix))]
         {
-            // Windows: 只监听 Ctrl+C
             let _ = signal::ctrl_c().await;
             info!("Received Ctrl+C, initiating graceful shutdown...");
         }
     };
 
-    // 定期检查停止标志
     let flag_check = async {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            if shutdown_flag.load(Ordering::SeqCst) {
-                info!("Shutdown requested...");
-                break;
-            }
+        if let Some(ref mut rx) = shutdown_rx {
+            rx.changed().await.ok();
+            info!("Shutdown requested...");
+        } else {
+            std::future::pending::<()>().await;
         }
     };
 
-    // 运行服务器直到收到关闭信号
     tokio::select! {
         result = server.run() => {
             if let Err(e) = result {
@@ -312,7 +307,9 @@ fn run_tui_with_channel(
         crossterm::{
             event::{self, Event, KeyCode, KeyEventKind},
             execute,
-            terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+            terminal::{
+                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+            },
         },
         layout::{Alignment, Constraint, Direction, Layout},
         style::{Color, Modifier, Style},
@@ -362,7 +359,8 @@ fn run_tui_with_channel(
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             auto_scroll = false;
-                            let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
+                            let log_height =
+                                terminal.size()?.height.saturating_sub(header_height + 2) as usize;
                             let max_scroll = log_entries.len().saturating_sub(log_height);
                             scroll_offset = scroll_offset.saturating_add(1).min(max_scroll);
                         }
@@ -372,7 +370,8 @@ fn run_tui_with_channel(
                         }
                         KeyCode::PageDown => {
                             auto_scroll = false;
-                            let log_height = terminal.size()?.height.saturating_sub(header_height + 2) as usize;
+                            let log_height =
+                                terminal.size()?.height.saturating_sub(header_height + 2) as usize;
                             let max_scroll = log_entries.len().saturating_sub(log_height);
                             scroll_offset = scroll_offset.saturating_add(10).min(max_scroll);
                         }
@@ -404,7 +403,8 @@ fn run_tui_with_channel(
                 .split(size);
 
             // 绘制头部
-            let header_text: Vec<Line> = header_lines.iter()
+            let header_text: Vec<Line> = header_lines
+                .iter()
                 .map(|line| Line::from(line.as_str()))
                 .collect();
 
@@ -414,7 +414,11 @@ fn run_tui_with_channel(
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan))
                         .title(" Server Status ")
-                        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                 )
                 .alignment(Alignment::Left);
 
@@ -424,25 +428,30 @@ fn run_tui_with_channel(
             let log_height = chunks[1].height.saturating_sub(2) as usize; // 减去边框
 
             // 绘制日志区域
-            let log_lines: Vec<Line> = log_entries.iter().map(|entry| {
-                let (level_color, level_str) = level_style(entry.level);
+            let log_lines: Vec<Line> = log_entries
+                .iter()
+                .map(|entry| {
+                    let (level_color, level_str) = level_style(entry.level);
 
-                Line::from(vec![
-                    ratatui::text::Span::styled(
-                        format!("[{}] ", entry.timestamp),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    ratatui::text::Span::styled(
-                        level_str,
-                        Style::default().fg(level_color).add_modifier(Modifier::BOLD),
-                    ),
-                    ratatui::text::Span::raw(" "),
-                    ratatui::text::Span::styled(
-                        entry.message.clone(),
-                        Style::default().fg(Color::White),
-                    ),
-                ])
-            }).collect();
+                    Line::from(vec![
+                        ratatui::text::Span::styled(
+                            format!("[{}] ", entry.timestamp),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        ratatui::text::Span::styled(
+                            level_str,
+                            Style::default()
+                                .fg(level_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        ratatui::text::Span::raw(" "),
+                        ratatui::text::Span::styled(
+                            entry.message.clone(),
+                            Style::default().fg(Color::White),
+                        ),
+                    ])
+                })
+                .collect();
 
             // 计算实际滚动偏移：确保最新日志显示在底部
             // 当 scroll_offset >= log_lines.len() 时，显示最新日志（底部对齐效果）
@@ -458,7 +467,7 @@ fn run_tui_with_channel(
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Blue))
                         .title(" Logs (Press q to quit, use arrow keys to scroll) ")
-                        .title_style(Style::default().fg(Color::Blue))
+                        .title_style(Style::default().fg(Color::Blue)),
                 )
                 .wrap(Wrap { trim: false })
                 .scroll((actual_scroll as u16, 0));
@@ -468,10 +477,7 @@ fn run_tui_with_channel(
     };
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;
 
     result
@@ -491,8 +497,8 @@ fn level_style(level: tracing::Level) -> (ratatui::style::Color, &'static str) {
 
 /// 构建头部显示行（纯文本，无边框）
 fn build_header_lines(status_info: &version::ServerStatusInfo) -> Vec<String> {
-    use crate::version::VERSION_INFO;
     use crate::config::ProtocolType;
+    use crate::version::VERSION_INFO;
 
     let product_line = format!("█ {} v{}", VERSION_INFO.product_name, VERSION_INFO.version);
     let author_line = format!("█ by {}", VERSION_INFO.author);
@@ -514,12 +520,12 @@ fn build_header_lines(status_info: &version::ServerStatusInfo) -> Vec<String> {
         copyright_line,
         String::new(),
     ];
-    
+
     // 公网 IP 行（如果可用）
     if let Some(ref public_ip) = status_info.public_ip {
         lines.push(format!("[█] Public IP: {}", public_ip));
     }
-    
+
     lines.push(format!("[█] Listening on {}", status_info.listen_addr));
     lines.push(format!("[█] Protocol: {}", protocol_str));
 

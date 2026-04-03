@@ -3,7 +3,7 @@
 # ============================================================================
 [package]
 name = "vless-rust"
-version = "1.7.8"
+version = "1.7.9"
 edition = "2021"
 default-run = "vless"
 authors = ["HuY"]
@@ -18,21 +18,21 @@ license = "Copyright (C) 2026"
 # ============================================================================
 # [package.metadata.windows] - Windows 资源元数据（自定义扩展）
 # ============================================================================
-[package.metadata.windows]
+[package.metadata.winres]
 # 产品名称：显示在 Windows 资源管理器"详细信息"标签页
-product-name = "VLESS Rust Server"
+ProductName = "VLESS Rust Server"
 
 # 公司/组织名称
-company-name = "Huy"
+CompanyName = "Huy"
 
 # 文件描述：显示在任务管理器和资源管理器
-file-description = "High-performance VLESS protocol server"
+FileDescription = "High-performance VLESS protocol server"
 
 # 版权声明：显示在资源管理器"详细信息"标签页
-legal-copyright = "Copyright (C) 2026"
+LegalCopyright = "Copyright (C) 2026"
 
 # 注释：附加信息
-comments = "High-performance VLESS protocol implementation in Rust"
+Comments = "High-performance VLESS protocol implementation in Rust"
 
 [[bin]]
 name = "vless"
@@ -80,6 +80,7 @@ libc = "0.2"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+embed-resource = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

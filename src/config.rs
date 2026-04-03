@@ -1,6 +1,6 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use anyhow::Result;
 
 /// 协议类型
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,18 +43,37 @@ pub struct PerformanceConfig {
     pub ws_header_buffer_size: usize,
 }
 
-fn default_buffer_size() -> usize { 64 * 1024 }  // 64KB（更适合小数据传输）
-fn default_tcp_recv_buffer() -> usize { 128 * 1024 }  // 128KB（减少内存占用）
-fn default_tcp_send_buffer() -> usize { 128 * 1024 }  // 128KB（减少内存占用）
-fn default_tcp_nodelay() -> bool { true }
-fn default_udp_timeout() -> u64 { 30 }
-fn default_udp_recv_buffer() -> usize { 64 * 1024 }  // 64KB
+fn default_buffer_size() -> usize {
+    64 * 1024
+} // 64KB（更适合小数据传输）
+fn default_tcp_recv_buffer() -> usize {
+    128 * 1024
+} // 128KB（减少内存占用）
+fn default_tcp_send_buffer() -> usize {
+    128 * 1024
+} // 128KB（减少内存占用）
+fn default_tcp_nodelay() -> bool {
+    true
+}
+fn default_udp_timeout() -> u64 {
+    30
+}
+fn default_udp_recv_buffer() -> usize {
+    64 * 1024
+} // 64KB
 fn default_buffer_pool_size() -> usize {
     // 增加池大小以适应双池设计（小缓冲区池 + 大缓冲区池）
-    std::cmp::min(64, std::thread::available_parallelism().map_or(8, |n| n.get() * 8))
+    std::cmp::min(
+        64,
+        std::thread::available_parallelism().map_or(8, |n| n.get() * 8),
+    )
 }
-fn default_ws_header_buffer_size() -> usize { 8 * 1024 }  // 8KB
-fn default_ws_path() -> String { "/vless".to_string() }
+fn default_ws_header_buffer_size() -> usize {
+    8 * 1024
+} // 8KB
+fn default_ws_path() -> String {
+    "/vless".to_string()
+}
 
 impl Default for PerformanceConfig {
     fn default() -> Self {

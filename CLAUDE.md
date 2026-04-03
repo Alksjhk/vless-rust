@@ -2,250 +2,143 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概述
+## Project Overview
 
-这是一个基于 Rust 和 Tokio 实现的高性能 VLESS 协议服务器。项目遵循 xray-core 的 VLESS 协议规范，支持版本 0（测试版）和版本 1（正式版）。
+A high-performance VLESS protocol server implemented in Rust with Tokio. Follows xray-core VLESS protocol specification (versions 0 and 1).
 
-## 常用命令
+**Key Features:**
+- TCP and WebSocket transport support
+- UDP over TCP (UoT) proxy
+- Multi-user UUID authentication
+- TUI terminal interface with log scrolling
+- HTTP API for VLESS link generation
+- Linux service management (systemd/OpenRC)
 
-### 编译和运行
-```bash
-# 编译项目
-cargo build
-
-# 编译优化版本
-cargo build --release
-
-# 运行服务器（使用默认配置文件 config.json）
-cargo run
-
-# 运行服务器（指定配置文件）
-cargo run -- /path/to/config.json
-
-# 禁用 TUI（使用传统日志输出）
-cargo run -- --no-tui
-# 或设置环境变量
-DISABLE_TUI=1 cargo run
-
-# 检查代码（不编译）
-cargo check
-```
-
-### Linux 服务管理
+## Build Commands
 
 ```bash
-# 安装并启动服务（自动检测 systemd 或 OpenRC）
-./vless --init
+# Build
+cargo build              # Debug build
+cargo build --release    # Release build (optimized with lto=thin, codegen-units=1)
 
-# 卸载服务
-./vless --remove
+# Run
+cargo run                # Run with config.json (auto-starts wizard if missing)
+cargo run -- /path/to/config.json    # Specify config file
+cargo run -- --no-tui    # Disable TUI interface
+DISABLE_TUI=1 cargo run  # Alternative way to disable TUI
+
+# Test
+cargo test                              # Run all tests
+cargo test test_name                    # Run specific test
+cargo test -- --nocapture              # Show println! output
+cargo test --test integration_test      # Run specific test file
+
+# Lint & Format
+cargo fmt                # Format code
+cargo fmt --check        # Check formatting (CI)
+cargo clippy             # Run linter
+cargo clippy -- -D warnings    # Fail on warnings
+
+# Check
+cargo check              # Fast syntax/type check
+cargo clean              # Remove build artifacts
 ```
 
-**Systemd（无需 root）：**
-- 服务名称：`vless-rust-serve`
-- 日志查看：`journalctl --user -u vless-rust-serve -f`
-- 管理命令：`systemctl --user stop/restart/status vless-rust-serve`
+## Architecture
 
-**OpenRC（需要 root）：**
-- 服务名称：`vless-rust-serve`
-- 日志位置：`/var/log/vless-rust-serve.log`
-- 管理命令：`rc-service vless-rust-serve stop/restart/status`
+### Connection Lifecycle
 
-### TUI 控制说明
-
-服务器默认启用 TUI 终端界面，提供以下交互功能：
-- **按键控制**：
-  - `q` / `Esc`: 退出程序
-  - `↑` / `↓` 或 `k` / `j`: 上下滚动日志
-  - `Page Up` / `Page Down`: 快速翻页
-  - `Home`: 跳转到顶部
-  - `End`: 跳转到底部并重新启用自动滚动
-
-- **禁用 TUI**：
-  - 使用命令行参数: `--no-tui`
-  - 设置环境变量: `DISABLE_TUI=1`
-
-## 架构设计
-
-### 模块职责
-
-**后端核心模块：**
-
-- `src/main.rs`: 程序入口，负责配置加载、服务器启动、关闭信号处理和 TUI 控制
-- `src/config.rs`: 配置文件解析，支持 JSON 格式的服务器和用户配置
-- `src/protocol.rs`: VLESS 协议编解码实现，包含请求/响应结构体和地址类型处理
-- `src/server.rs`: 服务器核心逻辑（调度器），处理连接分发和优雅关闭
-- `src/ws.rs`: WebSocket 协议处理，支持 VLESS over WebSocket
-- `src/http.rs`: HTTP 请求检测、工具函数和响应构建
-- `src/tcp.rs`: TCP 协议处理，包含 TCP/UDP 代理转发
-- `src/address.rs`: 地址解析工具，统一处理域名解析和地址转换
-- `src/socket.rs`: TCP Socket 配置
-- `src/api.rs`: HTTP API 处理，提供信息页面和 VLESS 链接生成
-- `src/public_ip.rs`: 公网 IP 自动获取
-- `src/vless_link.rs`: VLESS 链接生成
-- `src/wizard.rs`: 配置向导，交互式生成配置文件
-- `src/tui.rs`: TUI 终端界面，日志显示和交互控制
-- `src/version.rs`: 版本信息管理（包含 version_info.rs）
-- `src/service.rs`: Linux 服务管理（systemd/OpenRC）
-- `src/atomic_write.rs`: 原子文件写入工具
-
-### 关键设计模式
-
-**协议请求检测：**
-- 通过 `is_http_request()` 检测数据包前缀判断请求类型
-- 拒绝 HTTP 请求，只处理 VLESS 协议请求
-
-**异步代理转发：**
-- 使用 `tokio::spawn` 同时处理双向数据流
-- 任一方向关闭时，整个代理连接终止
-- **可配置缓冲区**：默认128KB，适配高带宽场景
-
-**HTTP API 功能：**
-- 服务器启动时自动获取公网 IP
-- 访问根路径 `/` 显示服务器信息页面
-- 通过 `/?email=user@example.com` 获取用户 VLESS 链接
-- 支持 TCP 和 WebSocket 两种链接格式
-
-### 配置文件结构
-
-```json
-{
-  "server": {
-    "listen": "0.0.0.0",
-    "port": 8443,
-    "protocol": "tcp",
-    "ws_path": "/vless"
-  },
-  "users": [
-    {
-      "uuid": "uuid-string",
-      "email": "user@example.com"
-    }
-  ],
-  "performance": {
-    "buffer_size": 131072,
-    "tcp_nodelay": true,
-    "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144,
-    "udp_timeout": 30,
-    "udp_recv_buffer": 65536,
-    "buffer_pool_size": 32,
-    "ws_header_buffer_size": 8192
-  }
-}
+```
+main.rs → TcpListener
+    ↓
+server.rs:handle_connection() → Detect protocol type
+    ↓
+    ├─ HTTP request → api.rs (info page / VLESS link generation)
+    ├─ WebSocket → ws.rs → tcp.rs (proxy logic)
+    └─ VLESS TCP → tcp.rs (proxy logic)
 ```
 
-配置文件在服务器启动时加载，不存在时自动启动配置向导。
+### Module Responsibilities
 
-## 文件与功能映射关系
+| Module | Purpose |
+|--------|---------|
+| `main.rs` | Entry point, graceful shutdown signal handling, TUI setup |
+| `server.rs` | Connection dispatcher, protocol detection (HTTP vs VLESS vs WebSocket) |
+| `tcp.rs` | VLESS protocol handshake, TCP/UDP proxy forwarding |
+| `ws.rs` | WebSocket upgrade handling, bridges to TCP proxy logic |
+| `protocol.rs` | VLESS protocol encoding/decoding, `VlessRequest`/`VlessResponse` structs |
+| `http.rs` | HTTP request detection, path/query extraction |
+| `api.rs` | HTTP handlers for info page and VLESS link generation |
+| `config.rs` | Configuration parsing with serde, defaults validation |
+| `address.rs` | DNS resolution, target address parsing |
+| `socket.rs` | TCP socket option configuration (nodelay, buffer sizes) |
+| `service.rs` | Linux service install/uninstall (systemd/OpenRC auto-detect) |
 
-### 后端核心文件
+### Key Design Patterns
 
-| 文件路径 | 核心功能 | 主要结构体/函数 |
-|---------|---------|---------------|
-| `src/main.rs` | 程序入口、服务器启动、TUI控制 | `main()` - 加载配置、启动服务器、关闭信号处理、TUI日志显示 |
-| `src/tui.rs` | TUI 终端界面 | `TuiLayer`、`LogEntry` - 日志收集层和日志条目结构 |
-| `src/version.rs` | 版本信息管理 | `ServerStatusInfo`、`VERSION_INFO` - 服务器状态和版本信息 |
-| `src/config.rs` | 配置管理、JSON解析 | `Config`、`ServerSettings`、`UserConfig`、`PerformanceConfig` |
-| `src/protocol.rs` | VLESS 协议编解码 | `VlessRequest`、`VlessResponse`、`Address`、`Command` |
-| `src/server.rs` | 服务器调度器、连接分发、优雅关闭 | `VlessServer`、`handle_connection()` - 根据协议类型分发到 tcp/ws 模块 |
-| `src/ws.rs` | WebSocket 协议处理 | `handle_ws_upgrade()`、`is_websocket_upgrade()` |
-| `src/http.rs` | HTTP 请求检测、工具函数、响应构建 | `is_http_request()`、`extract_http_path()`、`build_json_response()` |
-| `src/tcp.rs` | TCP 协议处理、代理转发 | `handle_tcp_connection()`、`handle_tcp_proxy()`、`handle_udp_proxy()` |
-| `src/address.rs` | 地址解析工具 | `resolve_protocol_address()`、`resolve_address()` - 统一地址解析 |
-| `src/socket.rs` | TCP Socket 配置 | `configure_tcp_socket()` |
-| `src/api.rs` | HTTP API 处理 | `handle_http_request()` - 信息页面和 VLESS 链接生成 |
-| `src/public_ip.rs` | 公网 IP 自动获取 | `fetch_public_ip_with_timeout()` - 并发获取公网 IP |
-| `src/vless_link.rs` | VLESS 链接生成 | `generate_vless_links()` - 生成 TCP/WS 链接 |
-| `src/wizard.rs` | 配置向导 | `ConfigWizard::run()` |
-| `src/service.rs` | Linux 服务管理 | `install_service()`、`uninstall_service()` - systemd/OpenRC 支持 |
-| `src/atomic_write.rs` | 原子文件写入 | `atomic_write_file()`、`atomic_write_file_with_perms()` |
+**Protocol Detection:**
+- `http::is_http_request()` inspects first bytes for HTTP method signatures
+- WebSocket detected via `Upgrade: websocket` header after HTTP parsing
+- VLESS protocol determined by UUID-based header validation
 
-### 配置文件
+**Proxy Data Flow:**
+- Bidirectional copy via `tokio::spawn` for each direction
+- Configurable buffer size (default 128KB from `performance.buffer_size`)
+- Connection terminates when either direction closes
 
-| 文件路径 | 核心功能 | 说明 |
-|---------|---------|------|
-| `Cargo.toml` | Rust 项目配置 | 依赖项、编译优化、二进制配置 |
-| `config.json` | 运行时配置 | 服务器、用户、性能参数（自动生成） |
+**Configuration:**
+- JSON config with `server`, `users`, `performance` sections
+- Auto-generates via interactive wizard if `config.json` missing
+- Performance tuning: TCP nodelay, buffer sizes, UDP timeout
 
-### 文档文件
+## Testing
 
-| 文件路径 | 核心功能 | 说明 |
-|---------|---------|------|
-| `CLAUDE.md` | AI 助手规则 | 项目架构、开发指南、文件映射 |
-| `README.md` | 项目说明 | 安装、使用、部署指南 |
-| `AGENTS.md` | AI 角色定义 | 项目助手行为规范 |
+**Test Locations:**
+- Unit tests: Inline `#[cfg(test)]` modules in source files
+- Integration tests: `tests/` directory (`protocol_test.rs`, `tcp_test.rs`, etc.)
 
-### 功能快速查找
+**Test Patterns:**
+```bash
+# Async tests use #[tokio::test]
+# Return anyhow::Result for ? operator support
+# tempfile crate for file-based tests
+```
 
-**需要修改/查找...**
+## Platform-Specific Notes
 
-- **服务器启动流程** → `src/main.rs:main()`
-- **配置项和默认值** → `src/config.rs:Config`、`PerformanceConfig`
-- **VLESS 协议解析** → `src/protocol.rs:VlessRequest::decode()`
-- **连接分发调度** → `src/server.rs:handle_connection()` - 根据协议类型分发
-- **TCP 代理转发** → `src/tcp.rs:handle_tcp_proxy()`
-- **UDP 代理转发** → `src/tcp.rs:handle_udp_proxy()`
-- **HTTP 请求检测** → `src/http.rs:is_http_request()`
-- **HTTP API 处理** → `src/api.rs:handle_http_request()` - 信息页面和链接生成
-- **公网 IP 获取** → `src/public_ip.rs:fetch_public_ip_with_timeout()`
-- **VLESS 链接生成** → `src/vless_link.rs:generate_vless_links()`
-- **WebSocket 处理** → `src/ws.rs`
-- **Socket 配置** → `src/socket.rs:configure_tcp_socket()`
-- **服务安装/卸载** → `src/service.rs:install_service()`、`uninstall_service()`
-- **编译优化配置** → `Cargo.toml` - `[profile.release]`
-- **性能参数调整** → `config.json` - `performance` 节点
+**Memory Allocator:**
+- Uses `mimalloc` on non-musl targets only
+- Musl targets use default allocator
 
-## 开发指南
+**Signal Handling:**
+- Unix: SIGINT, SIGTERM with graceful shutdown
+- Windows: Ctrl+C only
 
-### 扩展 VLESS 协议
+**Service Management:**
+- Systemd: User service (no root needed), logs via journalctl
+- OpenRC: System service (root needed), logs to `/var/log/vless-rust-serve.log`
 
-- **新命令类型**：在 `src/protocol.rs` 中添加 `Command` 枚举值
-- **新地址类型**：在 `Address` 枚举中添加变体
-- **命令处理**：在 `src/server.rs` 的 `handle_connection()` 中添加匹配分支
+## Development Guidelines
 
-## 编译优化
+**Import Order:** Crate modules → External crates → std → tokio → tracing → Other
 
-Release 版本启用了以下优化（见 Cargo.toml）：
-- `lto = "thin"`: 链接时优化
-- `codegen-units = 1`: 单代码生成单元（最佳优化）
-- `opt-level = 3`: 优化级别
-- `panic = "abort"`: 减小二进制大小
-- `strip = true`: 剥离符号表减小二进制大小
+**Error Handling:**
+- Return `anyhow::Result<T>` from functions
+- Use `?` operator for propagation
+- Include context: `anyhow::anyhow!("Failed to X: {}", e)`
 
-## 性能优化说明
+**Security:**
+- Never log UUIDs in success paths (acceptable in auth errors for debugging)
+- Use `atomic_write.rs` for config file modifications
+- Validate UUID format before protocol processing
 
-- **可配置缓冲区**：默认128KB传输缓冲区
-- **TCP_NODELAY**：默认启用，降低延迟
-- **大缓冲区**：适配千兆网络
+## Release Profile
 
-## UDP 协议支持
+See `Cargo.toml` `[profile.release]`:
+- `lto = "thin"`, `codegen-units = 1`, `opt-level = 3`
+- `panic = "abort"`, `strip = true`
 
-### 实现机制
+## References
 
-VLESS 协议使用 UDP over TCP (UoT) 机制传输 UDP 数据：
-
-- UDP 数据包封装在 TCP 连接中传输
-- 为每个 UDP 会话创建独立的 UDP socket
-- 支持域名解析
-- 30秒超时自动清理空闲会话
-
-### 配置项
-
-在 `config.json` 的 `performance` 节点配置 UDP 参数：
-
-- `udp_timeout`: UDP 会话超时时间（秒），默认 30
-- `udp_recv_buffer`: UDP 接收缓冲区大小（字节），默认 65536 (64KB)
-
-## 安全注意事项
-
-- UUID 是唯一的认证凭据，确保配置文件权限正确
-- 日志中不记录敏感信息
-- 建议生产环境配合 TLS 使用
-- 配置防火墙规则限制访问
-
-## 参考资料
-
-- [VLESS 协议规范](https://xtls.github.io/en/development/protocols/vless.html)
-- [xray-core 项目](https://github.com/XTLS/Xray-core)
-- [Tokio 官方文档](https://tokio.rs/)
+- [VLESS Protocol Spec](https://xtls.github.io/en/development/protocols/vless.html)
+- [xray-core](https://github.com/XTLS/Xray-core)

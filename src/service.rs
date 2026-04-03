@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::wizard::ConfigWizard;
 use crate::atomic_write;
+use crate::wizard::ConfigWizard;
 
 /// 服务名称
 const SERVICE_NAME: &str = "vless-rust-serve";
@@ -25,10 +25,11 @@ struct InstallContext {
 
 impl InstallContext {
     fn new() -> Result<Self, String> {
-        let exe_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {}", e))?;
+        let exe_path =
+            std::env::current_exe().map_err(|e| format!("Failed to get executable path: {}", e))?;
 
-        let exe_path_str = exe_path.to_str()
+        let exe_path_str = exe_path
+            .to_str()
             .ok_or("Executable path contains non-UTF-8 characters")?
             .to_string();
 
@@ -39,7 +40,12 @@ impl InstallContext {
 
         let config_path = work_dir.join("config.json");
 
-        Ok(Self { exe_path, exe_path_str, work_dir, config_path })
+        Ok(Self {
+            exe_path,
+            exe_path_str,
+            work_dir,
+            config_path,
+        })
     }
 
     fn prepare_config(&self) -> Result<(), String> {
@@ -53,10 +59,11 @@ impl InstallContext {
             println!("Expected config path: {}", self.config_path.display());
             println!("\nStarting configuration wizard to create config file...\n");
 
-            let config = ConfigWizard::run()
-                .map_err(|e| format!("Configuration wizard failed: {}", e))?;
+            let config =
+                ConfigWizard::run().map_err(|e| format!("Configuration wizard failed: {}", e))?;
 
-            let json = config.to_json()
+            let json = config
+                .to_json()
                 .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
             atomic_write::atomic_write_file_with_perms(&self.config_path, &json, 0o600)
@@ -69,7 +76,9 @@ impl InstallContext {
     }
 
     fn backup_file(&self, file: &Path) -> Option<PathBuf> {
-        if !file.exists() { return None; }
+        if !file.exists() {
+            return None;
+        }
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -102,7 +111,9 @@ impl InstallContext {
 }
 
 /// 检查是否为 Linux 系统
-pub fn is_linux() -> bool { cfg!(target_os = "linux") }
+pub fn is_linux() -> bool {
+    cfg!(target_os = "linux")
+}
 
 /// 检测可用的初始化系统
 pub fn detect_init_system() -> InitSystem {
@@ -115,8 +126,12 @@ pub fn detect_init_system() -> InitSystem {
     InitSystem::None
 }
 
-pub fn is_systemd_available() -> bool { detect_init_system() == InitSystem::Systemd }
-pub fn is_openrc_available() -> bool { detect_init_system() == InitSystem::OpenRC }
+pub fn is_systemd_available() -> bool {
+    detect_init_system() == InitSystem::Systemd
+}
+pub fn is_openrc_available() -> bool {
+    detect_init_system() == InitSystem::OpenRC
+}
 
 /// 统一的服务安装入口
 pub fn install_service() -> Result<(), String> {
@@ -146,21 +161,40 @@ fn check_config_file_writable(config_path: &Path) -> Result<(), String> {
         }
     } else if let Some(parent) = config_path.parent() {
         if !parent.exists() {
-            return Err(format!("Parent directory does not exist: {}", parent.display()));
+            return Err(format!(
+                "Parent directory does not exist: {}",
+                parent.display()
+            ));
         }
     }
     Ok(())
 }
 
 pub fn get_systemd_service_file_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
-    Ok(home.join(".config/systemd/user").join(format!("{}.service", SERVICE_NAME)))
+    let home = dirs::home_dir().ok_or("Failed to get home directory")?;
+    Ok(home
+        .join(".config/systemd/user")
+        .join(format!("{}.service", SERVICE_NAME)))
 }
 
-fn print_summary(name: &str, service_file: &Path, config_path: &Path, exe: &str, active: bool, init: InitSystem) {
+fn print_summary(
+    name: &str,
+    service_file: &Path,
+    config_path: &Path,
+    exe: &str,
+    active: bool,
+    init: InitSystem,
+) {
     println!("\n==========================================");
-    println!("Service '{}' {}", name, if active { "installed and started!" } else { "installed." });
+    println!(
+        "Service '{}' {}",
+        name,
+        if active {
+            "installed and started!"
+        } else {
+            "installed."
+        }
+    );
     println!("==========================================");
     println!("Service file: {}", service_file.display());
     println!("Config:       {}", config_path.display());
@@ -185,13 +219,20 @@ fn print_summary(name: &str, service_file: &Path, config_path: &Path, exe: &str,
 // ==================== Systemd 服务管理 ====================
 
 pub fn install_systemd_service() -> Result<(), String> {
-    if !is_linux() { return Err("Linux only".to_string()); }
-    if !is_systemd_available() { return Err("systemd not available".to_string()); }
+    if !is_linux() {
+        return Err("Linux only".to_string());
+    }
+    if !is_systemd_available() {
+        return Err("systemd not available".to_string());
+    }
 
     let ctx = InstallContext::new()?;
 
     if is_systemd_service_running() {
-        return Err(format!("Service '{}' running. Stop first: systemctl --user stop {}", SERVICE_NAME, SERVICE_NAME));
+        return Err(format!(
+            "Service '{}' running. Stop first: systemctl --user stop {}",
+            SERVICE_NAME, SERVICE_NAME
+        ));
     }
 
     ctx.prepare_config()?;
@@ -199,7 +240,8 @@ pub fn install_systemd_service() -> Result<(), String> {
     let service_file = get_systemd_service_file_path()?;
     if let Some(parent) = service_file.parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
     }
 
@@ -236,7 +278,9 @@ WantedBy=default.target
         println!("Backup at: {}", b.display());
     }
 
-    Command::new("systemctl").args(["--user", "daemon-reload"]).output()
+    Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output()
         .map_err(|e| format!("daemon-reload failed: {}", e))?;
 
     let _ = Command::new("loginctl").args(["enable-linger"]).output();
@@ -247,7 +291,10 @@ WantedBy=default.target
         .map_err(|e| format!("Failed to enable: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!("Failed to start: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "Failed to start: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -258,22 +305,37 @@ WantedBy=default.target
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    print_summary(SERVICE_NAME, &service_file, &ctx.config_path, &ctx.exe_path_str, is_active, InitSystem::Systemd);
+    print_summary(
+        SERVICE_NAME,
+        &service_file,
+        &ctx.config_path,
+        &ctx.exe_path_str,
+        is_active,
+        InitSystem::Systemd,
+    );
     Ok(())
 }
 
 pub fn uninstall_systemd_service() -> Result<(), String> {
-    if !is_linux() { return Err("Linux only".to_string()); }
+    if !is_linux() {
+        return Err("Linux only".to_string());
+    }
 
-    let _ = Command::new("systemctl").args(["--user", "stop", SERVICE_NAME]).output();
-    let _ = Command::new("systemctl").args(["--user", "disable", SERVICE_NAME]).output();
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", SERVICE_NAME])
+        .output();
+    let _ = Command::new("systemctl")
+        .args(["--user", "disable", SERVICE_NAME])
+        .output();
 
     let service_file = get_systemd_service_file_path()?;
     if service_file.exists() {
         let _ = std::fs::remove_file(&service_file);
     }
 
-    let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).output();
+    let _ = Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output();
     println!("Service '{}' stopped and removed.", SERVICE_NAME);
     Ok(())
 }
@@ -293,21 +355,32 @@ pub fn get_openrc_service_file_path() -> PathBuf {
 }
 
 pub fn install_openrc_service() -> Result<(), String> {
-    if !is_linux() { return Err("Linux only".to_string()); }
-    if !is_openrc_available() { return Err("OpenRC not available".to_string()); }
-    if !is_root() { return Err("OpenRC requires root. Run with sudo.".to_string()); }
+    if !is_linux() {
+        return Err("Linux only".to_string());
+    }
+    if !is_openrc_available() {
+        return Err("OpenRC not available".to_string());
+    }
+    if !is_root() {
+        return Err("OpenRC requires root. Run with sudo.".to_string());
+    }
 
     let ctx = InstallContext::new()?;
 
     if is_openrc_service_running() {
-        return Err(format!("Service running. Stop first: rc-service {} stop", SERVICE_NAME));
+        return Err(format!(
+            "Service running. Stop first: rc-service {} stop",
+            SERVICE_NAME
+        ));
     }
 
     ctx.prepare_config()?;
 
     let service_file = get_openrc_service_file_path();
     if ctx.exe_path == service_file {
-        return Err("Executable path conflicts with service path. Move to /usr/local/bin/".to_string());
+        return Err(
+            "Executable path conflicts with service path. Move to /usr/local/bin/".to_string(),
+        );
     }
 
     let backup = ctx.backup_file(&service_file);
@@ -351,9 +424,12 @@ start_pre() {{
         return Err(format!("Failed to write service file: {}", e));
     }
 
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&service_file, std::fs::Permissions::from_mode(0o755)) {
+        if let Err(e) =
+            std::fs::set_permissions(&service_file, std::fs::Permissions::from_mode(0o755))
+        {
             ctx.restore_backup(backup.as_ref(), &service_file);
             return Err(format!("Failed to set permissions: {}", e));
         }
@@ -363,16 +439,26 @@ start_pre() {{
         println!("Backup at: {}", b.display());
     }
 
-    let output = Command::new("rc-update").args(["add", SERVICE_NAME, "default"]).output()
+    let output = Command::new("rc-update")
+        .args(["add", SERVICE_NAME, "default"])
+        .output()
         .map_err(|e| format!("Failed to add service: {}", e))?;
     if !output.status.success() {
-        return Err(format!("rc-update failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "rc-update failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    let output = Command::new("rc-service").args([SERVICE_NAME, "start"]).output()
+    let output = Command::new("rc-service")
+        .args([SERVICE_NAME, "start"])
+        .output()
         .map_err(|e| format!("Failed to start: {}", e))?;
     if !output.status.success() {
-        return Err(format!("Start failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "Start failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -383,16 +469,31 @@ start_pre() {{
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    print_summary(SERVICE_NAME, &service_file, &ctx.config_path, &ctx.exe_path_str, is_active, InitSystem::OpenRC);
+    print_summary(
+        SERVICE_NAME,
+        &service_file,
+        &ctx.config_path,
+        &ctx.exe_path_str,
+        is_active,
+        InitSystem::OpenRC,
+    );
     Ok(())
 }
 
 pub fn uninstall_openrc_service() -> Result<(), String> {
-    if !is_linux() { return Err("Linux only".to_string()); }
-    if !is_root() { return Err("OpenRC requires root. Run with sudo.".to_string()); }
+    if !is_linux() {
+        return Err("Linux only".to_string());
+    }
+    if !is_root() {
+        return Err("OpenRC requires root. Run with sudo.".to_string());
+    }
 
-    let _ = Command::new("rc-service").args([SERVICE_NAME, "stop"]).output();
-    let _ = Command::new("rc-update").args(["del", SERVICE_NAME]).output();
+    let _ = Command::new("rc-service")
+        .args([SERVICE_NAME, "stop"])
+        .output();
+    let _ = Command::new("rc-update")
+        .args(["del", SERVICE_NAME])
+        .output();
 
     let service_file = get_openrc_service_file_path();
     if service_file.exists() {
@@ -412,10 +513,12 @@ fn is_openrc_service_running() -> bool {
 }
 
 fn is_root() -> bool {
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         unsafe { libc::getuid() == 0 }
     }
-    #[cfg(not(unix))] {
+    #[cfg(not(unix))]
+    {
         false
     }
 }
@@ -432,12 +535,16 @@ fn check_config_path_conflict(exe_path: &Path, config_path: &Path) -> Result<(),
 
     if let (Some(e), Some(c)) = (&exe_canon, &config_canon) {
         if e == c {
-            return Err("Config file resolves to the same file as executable (possibly via symlink)".to_string());
+            return Err(
+                "Config file resolves to the same file as executable (possibly via symlink)"
+                    .to_string(),
+            );
         }
     }
 
     if config_path.exists() {
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(meta) = std::fs::metadata(config_path) {
                 if meta.permissions().mode() & 0o111 != 0 {
@@ -449,7 +556,10 @@ fn check_config_path_conflict(exe_path: &Path, config_path: &Path) -> Result<(),
             }
         }
         if !config_path.is_file() {
-            return Err(format!("Config path exists but is not a file: {}", config_path.display()));
+            return Err(format!(
+                "Config path exists but is not a file: {}",
+                config_path.display()
+            ));
         }
     }
 

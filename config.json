@@ -7,14 +7,14 @@
   },
   "users": [
     {
-      "uuid": "7fa8b8a5-e2d4-44dc-b3b4-0b72f04397d8",
-      "email": "user1@a.com"
+      "uuid": "",
+      "email": ""
     }
   ],
   "performance": {
-    "buffer_size": 131072,
-    "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144,
+    "buffer_size": 65536,
+    "tcp_recv_buffer": 131072,
+    "tcp_send_buffer": 131072,
     "tcp_nodelay": true,
     "udp_timeout": 30,
     "udp_recv_buffer": 65536,

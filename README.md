@@ -4,16 +4,15 @@
 
 ## 特性
 
-- 完整 VLESS 协议支持（版本 0/1）
-- TCP + WebSocket 传输支持
-- UDP over TCP
-- 多用户 UUID 认证
-- 可配置缓冲区（默认 128KB）
-- TCP_NODELAY 优化
-- TUI 终端日志界面
-- 公网 IP 自动获取
-- HTTP API - VLESS 链接生成
-- Linux 服务管理（systemd/OpenRC）
+- **完整 VLESS 协议支持**: 版本 0/1 双版本兼容
+- **双传输模式**: TCP + WebSocket
+- **UDP over TCP**: UDP 代理封装传输
+- **多用户认证**: UUID 唯一标识，支持邮箱
+- **高性能优化**: TCP_NODELAY、可配置缓冲区、mimalloc 分配器
+- **TUI 终端界面**: 实时日志显示，支持滚动查看
+- **HTTP API**: VLESS 链接自动生成
+- **公网 IP 检测**: 自动获取服务器地址
+- **Linux 服务管理**: systemd/OpenRC 自动适配
 
 ## 快速开始
 
@@ -30,91 +29,21 @@ cargo build --release
 cargo run
 
 # 指定配置文件
-./target/release/vless.exe config.json
+./vless config.json
 
-# 禁用 TUI（使用传统日志输出）
-./target/release/vless.exe --no-tui
+# 禁用 TUI（传统日志输出）
+./vless --no-tui
 # 或
-DISABLE_TUI=1 ./target/release/vless.exe
+DISABLE_TUI=1 ./vless
 ```
 
 **优雅关闭**
-- Unix 系统：支持 SIGINT (Ctrl+C) 和 SIGTERM 信号
-- Windows 系统：支持 Ctrl+C 信号
-- 关闭时会优雅终止所有连接，避免资源泄露
+- Unix: SIGINT (Ctrl+C)、SIGTERM
+- Windows: Ctrl+C
+- TUI界面使用`Q`或`q`
+## 配置
 
-### Linux 服务管理
-
-在 Linux 系统上，可以使用 systemd 或 OpenRC 管理服务器进程。程序会自动检测系统使用的初始化系统。
-
-#### Systemd（无需 root 权限）
-
-```bash
-# 安装并启动服务
-./vless --init
-
-# 卸载服务
-./vless --remove
-
-# 查看服务状态
-systemctl --user status vless-rust-serve
-
-# 查看日志
-journalctl --user -u vless-rust-serve -f
-
-# 其他命令
-systemctl --user stop vless-rust-serve      # 停止服务
-systemctl --user restart vless-rust-serve   # 重启服务
-```
-
-**Systemd 服务说明：**
-- 服务类型：systemd user service（无需 root 权限）
-- 服务名称：vless-rust-serve
-- 配置文件：可执行文件同目录下的 config.json
-- 自动重启：失败后 5 秒重启
-
-#### OpenRC（需要 root 权限）
-
-适用于 Alpine Linux、Gentoo 等使用 OpenRC 的发行版。
-
-```bash
-# 安装并启动服务（需要 sudo）
-sudo ./vless --init
-
-# 卸载服务（需要 sudo）
-sudo ./vless --remove
-
-# 查看服务状态
-rc-service vless-rust-serve status
-
-# 查看日志
-tail -f /var/log/vless-rust-serve.log
-
-# 其他命令
-sudo rc-service vless-rust-serve stop      # 停止服务
-sudo rc-service vless-rust-serve restart   # 重启服务
-```
-
-**OpenRC 服务说明：**
-- 服务类型：系统服务（需要 root 权限）
-- 服务名称：vless-rust-serve
-- 配置文件：可执行文件同目录下的 config.json
-- 日志文件：
-  - 标准输出：/var/log/vless-rust-serve.log
-  - 错误输出：/var/log/vless-rust-serve.err
-
-### 客户端配置
-
-| 参数 | 值 |
-|------|-----|
-| 协议 | VLESS |
-| 地址 | 服务器 IP |
-| 端口 | 配置的端口 |
-| UUID | 配置文件中的 UUID |
-| 加密 | none |
-| 传输 | TCP / WebSocket |
-
-## 配置文件
+### 配置文件示例
 
 ```json
 {
@@ -122,23 +51,17 @@ sudo rc-service vless-rust-serve restart   # 重启服务
     "listen": "0.0.0.0",
     "port": 8443,
     "protocol": "tcp",
-    "ws_path": "/vless"
+    "ws_path": "/"
   },
   "users": [
     {
-      "uuid": "uuid-string",
-      "email": "user@example.com"
+      "uuid": "",
+      "email": ""
     }
   ],
   "performance": {
-    "buffer_size": 131072,
-    "tcp_nodelay": true,
-    "tcp_recv_buffer": 262144,
-    "tcp_send_buffer": 262144,
-    "udp_timeout": 30,
-    "udp_recv_buffer": 65536,
-    "buffer_pool_size": 32,
-    "ws_header_buffer_size": 8192
+    "buffer_size": 65536,
+    "tcp_nodelay": true
   }
 }
 ```
@@ -151,7 +74,7 @@ sudo rc-service vless-rust-serve restart   # 重启服务
 | listen | 0.0.0.0 | 监听地址 |
 | port | 443 | 监听端口 |
 | protocol | tcp | 传输协议 (tcp/ws) |
-| ws_path | /vless | WebSocket 路径 (ws模式) |
+| ws_path | /vless | WebSocket 路径 |
 
 **users**
 | 参数 | 说明 |
@@ -159,74 +82,102 @@ sudo rc-service vless-rust-serve restart   # 重启服务
 | uuid | 用户唯一标识 |
 | email | 用户邮箱 (可选) |
 
-**performance** (可选)
+**performance**
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| buffer_size | 131072 | 传输缓冲区 (128KB) |
-| tcp_nodelay | true | 启用 TCP_NODELAY |
-| tcp_recv_buffer | 262144 | TCP 接收缓冲 (256KB) |
-| tcp_send_buffer | 262144 | TCP 发送缓冲 (256KB) |
+| buffer_size | 65536 | 传输缓冲区 (64KB) |
+| tcp_nodelay | true | 禁用 Nagle 算法 |
+| tcp_recv_buffer | 131072 | TCP 接收缓冲 (128KB) |
+| tcp_send_buffer | 131072 | TCP 发送缓冲 (128KB) |
 | udp_timeout | 30 | UDP 会话超时 (秒) |
-| udp_recv_buffer | 65536 | UDP 接收缓冲 (64KB) |
-| buffer_pool_size | 32 | 预留配置项 |
-| ws_header_buffer_size | 8192 | WebSocket 头缓冲 (8KB) |
+
+## Linux 服务管理
+
+### Systemd（无需 root）
+
+```bash
+# 安装并启动服务
+./vless --init
+
+# 卸载服务
+./vless --remove
+
+# 查看状态
+systemctl --user status vless-rust-serve
+journalctl --user -u vless-rust-serve -f
+```
+
+### OpenRC（需要 root）
+
+```bash
+# 安装并启动服务
+sudo ./vless --init
+
+# 卸载服务
+sudo ./vless --remove
+
+# 查看状态
+rc-service vless-rust-serve status
+tail -f /var/log/vless-rust-serve.log
+```
 
 ## HTTP API
 
-服务器提供 HTTP API 用于获取服务器信息和生成 VLESS 链接。
-
 ### 信息页面
-
-访问服务器根路径查看服务器信息：
 
 ```
 http://<server-ip>:8443/
 ```
 
-返回 HTML 页面，包含服务器 IP、端口、协议等信息。
-
 ### 获取 VLESS 链接
 
-通过 `email` 参数获取用户的 VLESS 链接：
-
 ```
-http://<server-ip>:8443/?email=your_email
+http://<server-ip>:8443/?email=user@example.com
 ```
 
-返回 JSON 格式的 VLESS 链接：
-
+返回：
 ```json
-// TCP 协议
 {
-  "tcp": "vless://...",
-  "tcp_b64": "..."
-}
-
-// WebSocket 协议
-{
-  "ws": "vless://...",
-  "ws_b64": "..."
+  "tcp": "vless://uuid@ip:port?encryption=none...",
+  "tcp_b64": "base64_encoded_link",
+  "ws": "vless://uuid@ip:port?encryption=none&type=ws...",
+  "ws_b64": "base64_encoded_link"
 }
 ```
 
-### 部署
+## 客户端配置
 
-1. 编译：`cargo build --release`
-2. 复制 `target/release/vless.exe` 到服务器
-3. 创建 `config.json`
-4. 运行：`./vless.exe`
+| 参数 | 值 |
+|------|-----|
+| 协议 | VLESS |
+| 地址 | 服务器 IP |
+| 端口 | 配置的端口 |
+| UUID | 配置文件中的 UUID |
+| 加密 | none |
+| 传输 | TCP / WebSocket |
+
+## 部署
+
+1. 编译: `cargo build --release`
+2. 复制 `target/release/vless` 到服务器
+3. 运行 `./vless` 生成配置
+4. 服务管理: `./vless --init`
 
 ## 安全注意
 
 - UUID 是唯一认证凭据，请保密
 - 建议生产环境配合 TLS 使用
-- 合理配置防火墙规则
+- 配置文件权限自动设置为 600
+
+## 技术文档
+
+详见 [docs/tech.md](docs\technology.md)
 
 ## 参考
 
 - [VLESS 协议规范](https://xtls.github.io/en/development/protocols/vless.html)
-- [xray-core 项目](https://github.com/XTLS/Xray-core)
+- [xray-core](https://github.com/XTLS/Xray-core)
 
 ## 许可证
 
-MIT
+Copyright (C) 2026

@@ -3,15 +3,18 @@
 //! 处理 HTTP 请求，提供 VLESS 链接生成和服务器信息展示
 
 use crate::config::ProtocolType;
-use crate::http::{parse_http_request, build_html_response, build_json_response, build_404_response, build_400_response};
-use crate::vless_link::{generate_vless_links, VlessLinkConfig};
+use crate::http::{
+    build_400_response, build_404_response, build_html_response, build_json_response,
+    parse_http_request,
+};
 use crate::version::VERSION_INFO;
+use crate::vless_link::{generate_vless_links, VlessLinkConfig};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tracing::{info, debug};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 /// API 处理配置
@@ -24,8 +27,8 @@ pub struct ApiConfig {
     pub protocol: ProtocolType,
     /// WebSocket 路径（仅 WebSocket 协议）
     pub ws_path: Option<String>,
-    /// 用户邮箱映射
-    pub user_emails: HashMap<Uuid, Option<Arc<str>>>,
+    /// 用户邮箱映射（Arc 共享，避免深拷贝）
+    pub user_emails: Arc<HashMap<Uuid, Option<Arc<str>>>>,
 }
 
 /// 处理 HTTP 请求
@@ -72,7 +75,9 @@ async fn handle_link_request(
     config: &ApiConfig,
 ) -> Result<()> {
     // 根据 email 查找用户
-    let user_entry = config.user_emails.iter()
+    let user_entry = config
+        .user_emails
+        .iter()
         .find(|(_, e)| e.as_deref() == Some(email));
 
     match user_entry {
@@ -127,18 +132,17 @@ async fn handle_link_request(
 }
 
 /// 处理信息页面请求
-async fn handle_info_page(
-    stream: &mut TcpStream,
-    config: &ApiConfig,
-) -> Result<()> {
+async fn handle_info_page(stream: &mut TcpStream, config: &ApiConfig) -> Result<()> {
     let protocol_str = match config.protocol {
         ProtocolType::Tcp => "TCP",
         ProtocolType::WebSocket => "WebSocket",
     };
 
     let ws_path_info = if config.protocol == ProtocolType::WebSocket {
-        format!("<tr><td>WS Path</td><td><code>{}</code></td></tr>",
-                html_escape(config.ws_path.as_deref().unwrap_or("/")))
+        format!(
+            "<tr><td>WS Path</td><td><code>{}</code></td></tr>",
+            html_escape(config.ws_path.as_deref().unwrap_or("/"))
+        )
     } else {
         String::new()
     };
@@ -152,7 +156,8 @@ async fn handle_info_page(
             .replace('\'', "&#x27;")
     }
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">

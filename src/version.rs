@@ -54,7 +54,7 @@ fn protocol_string(protocol: ProtocolType) -> &'static str {
 /// * `status_info` - 服务器状态信息
 ///
 /// # 示例输出
-/// ```
+/// ```ignore
 /// ╭──────────────────────────────────────────────╮
 /// │  █ VLESS Rust Server v1.6.6                  │
 /// │  █ by HuY                                    │

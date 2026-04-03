@@ -2,17 +2,19 @@
 //!
 //! 处理原始 TCP 连接上的 VLESS 协议请求
 
+use crate::address::{connect_target, resolve_protocol_address};
 use crate::config::PerformanceConfig;
-use crate::protocol::{VlessRequest, VlessResponse, Command};
+use crate::protocol::{
+    authenticate_request, Command, VlessRequest, VlessResponse, VlessResponseSender,
+};
 use crate::socket::configure_tcp_socket;
-use crate::address::resolve_protocol_address;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// 处理 TCP 协议连接
 ///
@@ -47,7 +49,10 @@ where
     let mut small_buf = [0u8; 1024];
     let n = stream.read(&mut small_buf).await?;
     if n == 0 {
-        return Err(anyhow!("Connection closed by client (addr: {})", client_addr));
+        return Err(anyhow!(
+            "Connection closed by client (addr: {})",
+            client_addr
+        ));
     }
 
     // 从栈缓冲区创建 Bytes（一次拷贝，避免堆分配）
@@ -59,28 +64,27 @@ where
     debug!("Parsed VLESS request: {:?}", request);
 
     // 验证用户 UUID
-    if !users.contains(&request.uuid) {
-        warn!("Invalid UUID from {}: {} (not in config)", client_addr, request.uuid);
-        return Err(anyhow!("Authentication failed: invalid user UUID (addr: {})", client_addr));
-    }
-
+    authenticate_request(&request, users, client_addr)?;
     info!("Authenticated user {} from {}", request.uuid, client_addr);
 
-    // 发送响应头 - 使用与请求相同的版本号
     let response = VlessResponse::new_with_version(request.version);
-    stream.write_all(&response.encode()).await?;
+    stream.send_response(&response).await?;
 
-    // 获取用户邮箱
     let user_email = authenticate(request.uuid).await;
 
     // 根据命令类型处理连接
     match request.command {
         Command::Tcp => {
-            handle_tcp_proxy(stream, request, remaining_data, performance_config, user_email).await
+            handle_tcp_proxy(
+                stream,
+                request,
+                remaining_data,
+                performance_config,
+                user_email,
+            )
+            .await
         }
-        Command::Udp => {
-            handle_udp_proxy(stream, request, performance_config, user_email).await
-        }
+        Command::Udp => handle_udp_proxy(stream, request, performance_config, user_email).await,
         Command::Mux => {
             warn!("Mux command not implemented yet");
             Err(anyhow!("Mux not supported"))
@@ -96,30 +100,22 @@ async fn handle_tcp_proxy(
     perf_config: PerformanceConfig,
     _user_email: Option<Arc<str>>,
 ) -> Result<()> {
-    // 连接到目标服务器
-    let target_addr = resolve_protocol_address(&request.address, request.port).await?;
+    let mut target_stream = connect_target(&request.address, request.port, &perf_config).await?;
+    let target_addr = target_stream.peer_addr()?;
 
-    debug!("Connecting to target: {}", target_addr);
-    let mut target_stream = TcpStream::connect(target_addr).await?;
+    debug!("Connected to target: {}", target_addr);
 
-    // 配置目标连接的 TCP 参数
-    configure_tcp_socket(
-        &target_stream,
-        perf_config.tcp_recv_buffer,
-        perf_config.tcp_send_buffer,
-        perf_config.tcp_nodelay,
-    )?;
-
-    // 如果有初始数据，先发送给目标服务器
     let initial_len = initial_data.len();
     if initial_len > 0 {
         target_stream.write_all(&initial_data).await?;
     }
 
-    info!("Established proxy connection: {} -> {}",
-          client_stream.peer_addr()?, target_addr);
+    info!(
+        "Established proxy connection: {} -> {}",
+        client_stream.peer_addr()?,
+        target_addr
+    );
 
-    // 使用 tokio::io::copy 进行单向拷贝（比手动 read/write 循环更高效）
     let (mut client_read, mut client_write) = client_stream.into_split();
     let (mut target_read, mut target_write) = target_stream.into_split();
 
@@ -133,7 +129,6 @@ async fn handle_tcp_proxy(
         debug!("Target to client copy finished: {:?}", result);
     });
 
-    // 等待两个任务完成
     let _ = tokio::join!(client_to_target, target_to_client);
 
     debug!("Proxy connection closed");
@@ -150,7 +145,11 @@ async fn handle_udp_proxy(
     // 解析目标地址
     let target_addr = resolve_protocol_address(&request.address, request.port).await?;
 
-    info!("Establishing UDP proxy: {:?} -> {}", client_stream.peer_addr(), target_addr);
+    info!(
+        "Establishing UDP proxy: {:?} -> {}",
+        client_stream.peer_addr(),
+        target_addr
+    );
 
     // 绑定本地 UDP socket（随机端口）
     let udp_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
@@ -166,14 +165,12 @@ async fn handle_udp_proxy(
     let udp_socket_c2t = Arc::clone(&udp_socket);
 
     let client_to_target = tokio::spawn(async move {
-        let mut buffer = [0u8; 4096];
+        let mut buffer = [0u8; 16 * 1024]; // 16KB，覆盖大多数 UDP 载荷
         let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
         loop {
-            let timeout_result = tokio::time::timeout(
-                timeout_duration,
-                client_read.read(&mut buffer)
-            ).await;
+            let timeout_result =
+                tokio::time::timeout(timeout_duration, client_read.read(&mut buffer)).await;
 
             match timeout_result {
                 Ok(Ok(0)) => {
@@ -202,14 +199,12 @@ async fn handle_udp_proxy(
     let udp_socket_t2c = Arc::clone(&udp_socket);
 
     let target_to_client = tokio::spawn(async move {
-        let mut buffer = [0u8; 4096];
+        let mut buffer = [0u8; 16 * 1024]; // 16KB，覆盖大多数 UDP 载荷
         let timeout_duration = std::time::Duration::from_secs(udp_timeout);
 
         loop {
-            let timeout_result = tokio::time::timeout(
-                timeout_duration,
-                udp_socket_t2c.recv_from(&mut buffer)
-            ).await;
+            let timeout_result =
+                tokio::time::timeout(timeout_duration, udp_socket_t2c.recv_from(&mut buffer)).await;
 
             match timeout_result {
                 Ok(Ok((n, src))) => {

@@ -1,12 +1,15 @@
+use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures_util::SinkExt;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use tokio::io::AsyncWriteExt;
+use tokio_tungstenite::tungstenite::Message;
+use tracing::{debug, warn};
 use uuid::Uuid;
-use anyhow::{Result, anyhow};
-use tracing::debug;
 
 /// VLESS协议版本
-pub const VLESS_VERSION_BETA: u8 = 0;  // 测试版本
-pub const VLESS_VERSION_RELEASE: u8 = 1;  // 正式版本
+pub const VLESS_VERSION_BETA: u8 = 0; // 测试版本
+pub const VLESS_VERSION_RELEASE: u8 = 1; // 正式版本
 
 /// VLESS命令类型
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,7 +68,7 @@ impl Address {
         }
 
         let addr_type = AddressType::try_from(buf.get_u8())?;
-        
+
         match addr_type {
             AddressType::Ipv4 => {
                 if buf.len() < 4 {
@@ -112,10 +115,10 @@ impl Address {
 pub struct VlessRequest {
     pub version: u8,
     pub uuid: Uuid,
-    /// TODO: 实现附加数据处理
+    /// VLESS 附加数据长度（协议保留字段，当前版本服务端不处理附加数据内容）
     #[allow(dead_code)]
     pub addons_length: u8,
-    /// TODO: 实现附加数据处理
+    /// VLESS 附加数据（协议保留字段，已解析但服务端不处理，符合 xray-core 规范）
     #[allow(dead_code)]
     pub addons: Bytes,
     pub command: Command,
@@ -136,7 +139,11 @@ impl VlessRequest {
         }
 
         // 记录协议版本类型（用于调试）
-        let version_type = if version == VLESS_VERSION_BETA { "BETA" } else { "RELEASE" };
+        let version_type = if version == VLESS_VERSION_BETA {
+            "BETA"
+        } else {
+            "RELEASE"
+        };
         debug!("VLESS protocol version: {} ({})", version, version_type);
 
         // UUID (16字节)
@@ -146,7 +153,7 @@ impl VlessRequest {
 
         // Addons长度
         let addons_length = buf.get_u8();
-        
+
         // Addons数据（使用 Bytes 避免复制）
         let addons = if addons_length > 0 {
             if buf.len() < addons_length as usize {
@@ -191,7 +198,7 @@ pub struct VlessResponse {
 impl VlessResponse {
     pub fn new_with_version(version: u8) -> Self {
         Self {
-            version,  // 使用客户端相同的版本号
+            version, // 使用客户端相同的版本号
             addons_length: 0,
             addons: Bytes::new(),
         }
@@ -205,5 +212,60 @@ impl VlessResponse {
             buf.put_slice(&self.addons);
         }
         buf.freeze()
+    }
+}
+
+/// 验证 VLESS 请求的用户身份
+///
+/// # Arguments
+/// * `request` - VLESS 请求
+/// * `users` - 有效用户 UUID 集合
+/// * `client_addr` - 客户端地址（用于日志）
+///
+/// # Returns
+/// * `Result<()>` - 认证成功返回 Ok，失败返回错误
+pub fn authenticate_request(
+    request: &VlessRequest,
+    users: &std::collections::HashSet<uuid::Uuid>,
+    client_addr: std::net::SocketAddr,
+) -> anyhow::Result<()> {
+    if !users.contains(&request.uuid) {
+        warn!(
+            "Invalid UUID from {}: {} (not in config)",
+            client_addr, request.uuid
+        );
+        return Err(anyhow!(
+            "Authentication failed: invalid user UUID (addr: {})",
+            client_addr
+        ));
+    }
+    Ok(())
+}
+
+/// VLESS 响应发送器 trait
+pub trait VlessResponseSender: Send + Sync {
+    fn send_response(
+        &mut self,
+        response: &VlessResponse,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+
+impl VlessResponseSender for tokio::net::TcpStream {
+    async fn send_response(&mut self, response: &VlessResponse) -> Result<()> {
+        self.write_all(&response.encode()).await?;
+        Ok(())
+    }
+}
+
+impl VlessResponseSender
+    for futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        Message,
+    >
+{
+    async fn send_response(&mut self, response: &VlessResponse) -> Result<()> {
+        self.send(Message::Binary(response.encode().to_vec()))
+            .await?;
+        Ok(())
     }
 }
