@@ -38,10 +38,10 @@ pub fn configure_tcp_socket(
         .with_time(KEEPALIVE_IDLE)
         .with_interval(KEEPALIVE_INTERVAL);
 
-    // retries 仅在支持的平台上设置（Linux、macOS；Windows 忽略）
-    #[cfg(not(windows))]
+    // retries 仅在支持的平台上设置（glibc Linux、macOS；musl/Windows 不支持）
+    #[cfg(any(target_os = "macos", all(target_os = "linux", not(target_env = "musl"))))]
     let keepalive = keepalive.with_retries(KEEPALIVE_RETRIES);
-    #[cfg(windows)]
+    #[cfg(not(any(target_os = "macos", all(target_os = "linux", not(target_env = "musl")))))]
     let _ = KEEPALIVE_RETRIES;
 
     if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
