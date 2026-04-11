@@ -4,141 +4,120 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A high-performance VLESS protocol server implemented in Rust with Tokio. Follows xray-core VLESS protocol specification (versions 0 and 1).
+VLESS-Rust is a high-performance VLESS proxy protocol server written in Rust. It supports two transport modes: raw TCP and WebSocket, with built-in TUI dashboard, HTTP API for link generation, and Linux service management (systemd/OpenRC).
 
-**Key Features:**
-- TCP and WebSocket transport support
-- UDP over TCP (UoT) proxy
-- Multi-user UUID authentication
-- TUI terminal interface with log scrolling
-- HTTP API for VLESS link generation
-- Linux service management (systemd/OpenRC)
-
-## Build Commands
+## Build & Run Commands
 
 ```bash
-# Build
-cargo build              # Debug build
-cargo build --release    # Release build (optimized with lto=thin, codegen-units=1)
+# Build release (optimized, static linking)
+make release          # or: cargo build --release
 
-# Run
-cargo run                # Run with config.json (auto-starts wizard if missing)
-cargo run -- /path/to/config.json    # Specify config file
-cargo run -- --no-tui    # Disable TUI interface
-DISABLE_TUI=1 cargo run  # Alternative way to disable TUI
+# Build debug
+make dev              # or: cargo build
 
-# Test
-cargo test                              # Run all tests
-cargo test test_name                    # Run specific test
-cargo test -- --nocapture              # Show println! output
-cargo test --test integration_test      # Run specific test file
+# Run release server
+make run
 
-# Lint & Format
-cargo fmt                # Format code
-cargo fmt --check        # Check formatting (CI)
-cargo clippy             # Run linter
-cargo clippy -- -D warnings    # Fail on warnings
+# Run debug server
+make run-dev
 
-# Check
-cargo check              # Fast syntax/type check
-cargo clean              # Remove build artifacts
+# Clean
+make clean
+
+# Cross-compile for specific target
+cargo build --release --target x86_64-unknown-linux-musl
+cargo zigbuild --release --target aarch64-unknown-linux-musl
 ```
+
+## Test Commands
+
+```bash
+# Run all tests
+cargo test
+
+# Run a single test file
+cargo test --test protocol_test
+
+# Run tests matching a pattern
+cargo test test_vless_request_decode
+```
+
+## CLI Arguments
+
+- `vless [config_path]` — start server (default config: `config.json`)
+- `vless --no-tui` — disable TUI, run in log mode
+- `vless --init` — install as Linux system service
+- `vless --remove` — uninstall system service
+- `DISABLE_TUI=1` env var also disables TUI
 
 ## Architecture
 
-### Connection Lifecycle
+### Data Flow
 
 ```
-main.rs → TcpListener
-    ↓
-server.rs:handle_connection() → Detect protocol type
-    ↓
-    ├─ HTTP request → api.rs (info page / VLESS link generation)
-    ├─ WebSocket → ws.rs → tcp.rs (proxy logic)
-    └─ VLESS TCP → tcp.rs (proxy logic)
+Client TCP connection
+  → VlessServer (server.rs) accepts and spawns per-connection task
+  → Protocol detection via peek: HTTP? WebSocket? Raw VLESS?
+  → TCP mode:  VLESS header → authenticate UUID → proxy (tcp.rs)
+  → WS mode:   WS handshake → first binary message as VLESS header → proxy (ws.rs)
+  → HTTP:      API info page or VLESS link generation (api.rs)
 ```
 
-### Module Responsibilities
+### Core Module Responsibilities
 
-| Module | Purpose |
-|--------|---------|
-| `main.rs` | Entry point, graceful shutdown signal handling, TUI setup |
-| `server.rs` | Connection dispatcher, protocol detection (HTTP vs VLESS vs WebSocket) |
-| `tcp.rs` | VLESS protocol handshake, TCP/UDP proxy forwarding |
-| `ws.rs` | WebSocket upgrade handling, bridges to TCP proxy logic |
-| `protocol.rs` | VLESS protocol encoding/decoding, `VlessRequest`/`VlessResponse` structs |
-| `http.rs` | HTTP request detection, path/query extraction |
-| `api.rs` | HTTP handlers for info page and VLESS link generation |
-| `config.rs` | Configuration parsing with serde, defaults validation |
-| `address.rs` | DNS resolution, target address parsing |
-| `socket.rs` | TCP socket option configuration (nodelay, buffer sizes) |
-| `service.rs` | Linux service install/uninstall (systemd/OpenRC auto-detect) |
+- **`server.rs`** — Connection acceptor and dispatcher. Detects protocol type (TCP/WS/HTTP) and routes to the appropriate handler. Holds `ServerConfig` (Arc-shared) with user UUID set and email map.
+- **`protocol.rs`** — VLESS wire protocol codec. `VlessRequest::decode()` parses the binary header (version, UUID, addons, command, port, address). `VlessResponse` encodes the reply. `authenticate_request()` validates UUID against config. Defines `VlessResponseSender` trait implemented by both TcpStream and WebSocket SplitSink.
+- **`tcp.rs`** — Raw TCP VLESS handler. Parses request, authenticates, then splits stream for bidirectional `tokio::io::copy` proxy. Also handles UDP-over-TCP relay with timeout.
+- **`ws.rs`** — WebSocket VLESS handler. Performs manual WS handshake (SHA1 + base64 accept key), then splits WS stream for bidirectional proxy between WebSocket frames and TCP target.
+- **`config.rs`** — Configuration types: `Config` (JSON file format), `ProtocolType` (Tcp/WebSocket), `PerformanceConfig` (buffer sizes, TCP tuning, UDP timeout). All fields have defaults.
+- **`api.rs`** — HTTP API on the same port. Serves HTML info page at `/` and VLESS link generation at `/?email=...`. Returns JSON with `vless://` links and base64-encoded versions.
+- **`address.rs`** — Unified address resolution. `connect_target()` resolves domain/IP from `protocol::Address` enum and establishes TCP connection with socket tuning.
+- **`http.rs`** — HTTP request detection (`is_http_request`), parsing, and response builders with security headers (CSP, XSS protection, nosniff).
+- **`socket.rs`** — TCP socket configuration: `TCP_NODELAY`, keepalive (60s idle / 10s interval), and buffer size tuning via `socket2`.
+- **`vless_link.rs`** — Generates `vless://` subscription links for both TCP and WS transports.
+- **`public_ip.rs`** — Concurrently queries multiple IP APIs, returns first success with timeout.
+- **`service.rs`** — Linux service management: installs/uninstalls systemd user services or OpenRC system services. Generates service unit files with auto-restart.
+- **`wizard.rs`** — Interactive first-run configuration wizard (listen address, port, protocol, user UUIDs).
+- **`tui.rs`** — Ratatui-based TUI with fixed header (server status) and scrollable log viewer. Custom `tracing::Layer` sends log entries through an `mpsc` channel.
+- **`atomic_write.rs`** — Atomic file writes via temp file + rename, with Unix permission support.
+- **`version.rs`** — Banner printing and version formatting. Includes `version_info.rs` generated by `build.rs`.
+- **`main.rs`** — Entry point. Parses CLI args, loads/creates config, fetches public IP, starts server with graceful shutdown (SIGINT/SIGTERM on Unix, Ctrl+C on Windows). TUI runs on a separate thread.
 
-### Key Design Patterns
+### Key Design Decisions
 
-**Protocol Detection:**
-- `http::is_http_request()` inspects first bytes for HTTP method signatures
-- WebSocket detected via `Upgrade: websocket` header after HTTP parsing
-- VLESS protocol determined by UUID-based header validation
+- **mimalloc** is the global allocator (except musl targets where it's incompatible with static linking)
+- **Static linking** on all platforms (`+crt-static` in `.cargo/config.toml`); Linux uses musl
+- **Protocol detection by peek** — first bytes determine if it's HTTP, WS upgrade, or raw VLESS; no separate ports needed
+- **Zero-copy where possible** — `Bytes::split_to` for protocol parsing, `Arc<HashSet<Uuid>>` shared across connections, stack buffers for small reads
+- **`build.rs`** generates `src/version_info.rs` from `Cargo.toml` metadata and embeds Windows resources (icon, version info) via `.rc` file
 
-**Proxy Data Flow:**
-- Bidirectional copy via `tokio::spawn` for each direction
-- Configurable buffer size (default 128KB from `performance.buffer_size`)
-- Connection terminates when either direction closes
+### Configuration
 
-**Configuration:**
-- JSON config with `server`, `users`, `performance` sections
-- Auto-generates via interactive wizard if `config.json` missing
-- Performance tuning: TCP nodelay, buffer sizes, UDP timeout
+Config is `config.json` alongside the binary. Structure:
 
-## Testing
-
-**Test Locations:**
-- Unit tests: Inline `#[cfg(test)]` modules in source files
-- Integration tests: `tests/` directory (`protocol_test.rs`, `tcp_test.rs`, etc.)
-
-**Test Patterns:**
-```bash
-# Async tests use #[tokio::test]
-# Return anyhow::Result for ? operator support
-# tempfile crate for file-based tests
+```json
+{
+  "server": { "listen": "0.0.0.0", "port": 443, "protocol": "tcp", "ws_path": "/" },
+  "users": [{ "uuid": "...", "email": "..." }],
+  "performance": { "buffer_size": 65536, "tcp_nodelay": true, "udp_timeout": 30, ... }
+}
 ```
 
-## Platform-Specific Notes
+If config is missing, the interactive wizard launches automatically and writes it with `0o600` permissions on Unix.
 
-**Memory Allocator:**
-- Uses `mimalloc` on non-musl targets only
-- Musl targets use default allocator
+## CI/CD
 
-**Signal Handling:**
-- Unix: SIGINT, SIGTERM with graceful shutdown
-- Windows: Ctrl+C only
+GitHub Actions (`build.yml`) builds for 4 targets on push to main:
+- `x86_64-pc-windows-msvc`
+- `x86_64-unknown-linux-musl`
+- `aarch64-unknown-linux-musl` (via cargo-zigbuild)
+- `armv7-unknown-linux-musleabihf` (via cargo-zigbuild)
 
-**Service Management:**
-- Systemd: User service (no root needed), logs via journalctl
-- OpenRC: System service (root needed), logs to `/var/log/vless-rust-serve.log`
+Version is extracted from commit messages (e.g., `1.8.0 some description` → tag `v1.8.0`). If the version tag doesn't already exist as a release, it builds all platforms and creates a GitHub Release.
 
-## Development Guidelines
+## Platform-Specific Code
 
-**Import Order:** Crate modules → External crates → std → tokio → tracing → Other
-
-**Error Handling:**
-- Return `anyhow::Result<T>` from functions
-- Use `?` operator for propagation
-- Include context: `anyhow::anyhow!("Failed to X: {}", e)`
-
-**Security:**
-- Never log UUIDs in success paths (acceptable in auth errors for debugging)
-- Use `atomic_write.rs` for config file modifications
-- Validate UUID format before protocol processing
-
-## Release Profile
-
-See `Cargo.toml` `[profile.release]`:
-- `lto = "thin"`, `codegen-units = 1`, `opt-level = 3`
-- `panic = "abort"`, `strip = true`
-
-## References
-
-- [VLESS Protocol Spec](https://xtls.github.io/en/development/protocols/vless.html)
-- [xray-core](https://github.com/XTLS/Xray-core)
+- `#[cfg(unix)]` / `#[cfg(not(unix))]` for signal handling, file permissions, service management
+- `#[cfg(target_os = "windows")]` for Windows resource embedding in `build.rs`
+- `#[cfg(not(target_env = "musl"))]` for mimalloc (musl uses system allocator)
+- `windows` crate dependency only on Windows; `libc` only on Unix

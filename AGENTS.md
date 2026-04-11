@@ -1,245 +1,124 @@
 # AGENTS.md
 
-Coding guidelines for AI agents working on this VLESS server project.
+Compact guidance for OpenCode sessions working on vless-rust.
 
-## Build/Test Commands
+## Build & Test
 
 ```bash
-# Build
-cargo build                    # Debug build
-cargo build --release          # Release build (optimized)
-make release                   # Build + copy to root
-make dev                       # Debug build + copy to root
+# Build release (optimized, static linking)
+make release          # or: cargo build --release
 
-# Test
-cargo test                     # Run all tests
-cargo test test_name           # Run specific test by name
-cargo test --lib               # Unit tests only (src/)
-cargo test --test protocol_test # Specific integration test file
-cargo test -- --nocapture      # Show println! output
+# Build debug
+cargo build
 
-# Lint & Format
-cargo fmt                      # Format code
-cargo fmt --check              # Check formatting (CI)
-cargo clippy                   # Run linter
-cargo clippy -- -D warnings    # Warnings as errors
+# Run tests
+cargo test
+cargo test --test protocol_test    # single test file
+cargo test test_vless_request_decode   # pattern match
 
-# Check & Clean
-cargo check                    # Fast compile check
-cargo clean                    # Remove build artifacts
-make clean                     # Clean + remove executables
-
-# Run
-cargo run                      # Run debug build
-make run                       # Build and run release
+# Cross-compile (ARM targets need cargo-zigbuild)
+cargo zigbuild --release --target aarch64-unknown-linux-musl
+cargo zigbuild --release --target armv7-unknown-linux-musleabihf
 ```
 
-## Code Style
+## Architecture Notes
 
-### Import Order
+**Protocol Detection**: Single port handles HTTP, WebSocket, and raw VLESS via `peek()` on first 1024 bytes. See `server.rs` `detect_protocol()`.
 
-1. Crate modules (`use crate::`)
-2. External crates (alphabetically)
-3. Standard library (`use std::`)
-4. Tokio (`use tokio::`)
-5. Tracing (`use tracing::`)
-6. Other external (uuid, chrono, etc.)
+**Data Flow**: `server.rs` → protocol detection → (`tcp.rs` → `protocol.rs` → `address.rs` | `ws.rs` → `protocol.rs` → `address.rs` | `api.rs` → `http.rs` + `vless_link.rs`)
 
-```rust
-use crate::config::ServerConfig;
-use crate::protocol::VlessRequest;
+**Zero-Copy**: Uses `Bytes::split_to` for protocol parsing; `Arc<HashSet<Uuid>>` shared across connections.
 
-use anyhow::Result;
-use bytes::Bytes;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
-use tracing::{debug, error, info};
-use uuid::Uuid;
-```
-
-### Naming
-
-| Type | Convention | Example |
-|------|------------|---------|
-| Functions/Variables | `snake_case` | `handle_connection`, `client_addr` |
-| Constants | `SCREAMING_SNAKE_CASE` | `MAX_BUFFER_SIZE` |
-| Types/Structs/Enums | `PascalCase` | `ServerConfig`, `ProtocolType` |
-| Modules | `snake_case` | `tcp`, `ws`, `protocol` |
-
-### Error Handling
-
-- Use `anyhow::Result<T>` for returns
-- Use `anyhow::anyhow!("message")` for errors
-- Use `?` operator for propagation
-- Include context in messages
-
-```rust
-pub async fn run(&self) -> Result<()> {
-    let listener = TcpListener::bind(self.config.bind_addr).await?;
-    // ...
-}
-
-return Err(anyhow!("Connection closed by {}", addr));
-```
-
-### Types
-
-```rust
-#[derive(Debug, Clone)]
-pub struct ServerConfig {
-    pub bind_addr: SocketAddr,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ProtocolType {
-    #[default]
-    Tcp,
-    #[serde(rename = "ws")]
-    WebSocket,
-}
-```
-
-### Async Patterns
-
-```rust
-// Spawn task
-tokio::spawn(async move {
-    if let Err(e) = handle_client(stream, addr).await {
-        error!("Client error: {}", e);
-    }
-});
-
-// Select with shutdown
-tokio::select! {
-    result = server.run() => { ... }
-    _ = shutdown_signal() => { info!("Shutting down"); }
-}
-```
-
-### Testing
-
-- Unit tests: Inline `#[cfg(test)]` modules in source files
-- Integration tests: `tests/` directory (protocol_test.rs, tcp_test.rs, etc.)
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_request() {
-        let data = b"GET / HTTP/1.1\r\n";
-        assert!(parse_request(data).is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_async_function() {
-        let result = async_fn().await;
-        assert!(result.is_ok());
-    }
-}
-```
-
-## Project Structure
-
-```
-src/
-├── main.rs           # Entry point, TUI, signals
-├── lib.rs            # Library exports
-├── server.rs         # Connection dispatcher
-├── protocol.rs       # VLESS protocol codec
-├── tcp.rs            # TCP handler
-├── ws.rs             # WebSocket handler
-├── http.rs           # HTTP detection
-├── config.rs         # Configuration parsing
-├── api.rs            # HTTP API endpoints
-├── address.rs        # DNS resolution
-├── socket.rs         # TCP socket config
-├── wizard.rs         # Interactive config
-├── vless_link.rs     # VLESS link generation
-├── public_ip.rs      # IP detection
-├── service.rs        # Linux service mgmt
-├── atomic_write.rs   # Atomic file writes
-├── tui.rs            # Terminal UI
-├── version.rs        # Version display
-└── version_info.rs   # Generated constants
-
-tests/                # Integration tests
-├── protocol_test.rs
-├── tcp_test.rs
-├── ws_test.rs
-├── server_test.rs
-├── vless_link_test.rs
-├── public_ip_test.rs
-└── atomic_write_test.rs
-
-build.rs              # Build script (version, Windows resources)
-Cargo.toml            # Package manifest
-Makefile              # Build targets
-```
-
-## Critical Rules
-
-1. **No hardcoding** - Never hardcode paths, credentials, or magic numbers
-2. **Error context** - Always provide context in error messages
-3. **No `unwrap()` in production** - Use `expect()` with message or proper handling
-4. **Type safety** - No `as any` or type suppression
-5. **No lint suppression** without documented reason
-6. **Atomic writes** - Use atomic writes for config files
-7. **Security** - Never log sensitive info (UUIDs in auth errors OK for debug)
-
-## Tech Stack
-
-- **Edition**: Rust 2021
-- **Async**: Tokio (rt-multi-thread)
-- **Errors**: anyhow
-- **Logging**: tracing + tracing-subscriber
-- **Serialization**: serde + serde_json
-- **Allocator**: mimalloc (not on musl)
+**TUI Mode**: Runs on separate thread with `mpsc` channel for logs; server runs in async Tokio runtime.
 
 ## Platform-Specific Code
 
 ```rust
-// Memory allocator (musl incompatible)
+// musl targets: NO mimalloc (incompatible with static linking)
 #[cfg(not(target_env = "musl"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-// Platform-specific imports
-#[cfg(windows)]
-use windows::Win32::{...};
-
+// Unix: SIGINT/SIGTERM handling, file permissions (0o600)
 #[cfg(unix)]
-use libc::{...};
 
-// Signal handling
-#[cfg(unix)] {
-    use tokio::signal::unix::{signal, SignalKind};
-    // Handle SIGINT, SIGTERM
-}
-#[cfg(not(unix))] {
-    // Windows: Ctrl+C only
-    let _ = signal::ctrl_c().await;
-}
+// Windows: resource embedding via build.rs
+#[cfg(target_os = "windows")]
 ```
 
-## Release Profile
+## Generated Code
 
-```toml
-[profile.release]
-lto = "thin"           # Link-time optimization
-codegen-units = 1      # Maximum optimization
-opt-level = 3          # Speed priority
-panic = "abort"        # Smaller binary
-strip = true           # Remove symbols
-```
+- `build.rs` generates `src/version_info.rs` — **do not edit manually**
+- `build.rs` embeds Windows resources (icon, version info) on Windows targets
 
-## Pre-commit Checklist
+## CI/CD
 
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo clippy` reports no errors
-- [ ] `cargo test` passes
-- [ ] No `unwrap()` in non-test code without justification
-- [ ] Documentation updated for public API changes
+Version extracted from commit messages: `1.8.0 some description` → tag `v1.8.0`
+
+Builds 4 targets on push to main (if version tag doesn't exist):
+- `x86_64-pc-windows-msvc`
+- `x86_64-unknown-linux-musl`
+- `aarch64-unknown-linux-musl` (cargo-zigbuild)
+- `armv7-unknown-linux-musleabihf` (cargo-zigbuild)
+
+## Configuration
+
+- `config.json` alongside binary; auto-generated by wizard if missing
+- Unix: written with `0o600` permissions
+- See `docs/spec.md` for full schema
+
+## Key Files
+
+- `src/server.rs` — Connection dispatcher, protocol detection
+- `src/protocol.rs` — VLESS wire format codec
+- `src/tcp.rs` / `src/ws.rs` — Transport handlers
+- `src/api.rs` — HTTP API (info page, VLESS link generation)
+- `src/tui.rs` — Terminal UI with ratatui
+- `build.rs` — Version info generation, Windows resources
+
+## Testing
+
+Integration tests in `tests/` directory. No special setup required.
+
+## Role
+
+Senior Full-Stack Architect
+
+## Project Documentation Structure
+
+- `README.md`: User-facing usage guide, briefly introducing project-related information and usage methods.
+- `docs/spec.md` (Technical Specification): Defines "what it is". Contains technology stack, database schema, core business logic, and API definitions.
+- `docs/todo.md` (Task Progress Tracker): Defines "where we are". Lists all atomic tasks, marked with `[pending]`, `[doing]`, `[done]`.
+- `docs/architecture.md` (Architecture Design): Describes "how to do it". Contains project architecture, database design, cache design, message queue design, distributed locking design, error handling, logging, monitoring, testing, deployment, security, etc.
+
+## Constrained Behaviors
+
+1. Unified command separator: ASCII semicolon `;` for sequential execution. Conditional execution may use `&&`, but `;` is preferred in task descriptions.
+2. Strictly prohibit hard-coded absolute paths. Use relative paths, environment variables, or configuration items in `.env` or `dev-setup`.
+3. Frontend must implement a responsive UI, use relative resource paths, and avoid hard-coded domains or absolute URLs.
+4. Environment configuration should prioritize virtual environments or containers.
+5. Keep debugging/testing logic separate from production code. Consolidate tests in the `tests/` directory, and CI should execute acceptance checks from this directory.
+6. Adopt TDD to continuously produce high-quality, maintainable code.
+
+## Rule Priorities
+
+When conflicts arise, resolve by the following priority:
+
+1. Security rules (paths, environment variables, credential management) > other rules.
+2. Interface specifications (subagent task templates, API contracts) > document format.
+3. Functional requirements > documentation word-count limits (exceeding limits is allowed, but the reason must be stated at the beginning of the document).
+
+## Implementation Rules (Core Execution Guidelines)
+
+1. Source of truth: Before executing any task, read and follow root `docs/spec.md` and `docs/architecture.md`.
+2. Atomic modifications: Each subagent assignment should handle only one small task. Refactoring multiple unrelated files in a single response is prohibited.
+3. Deletion prohibition: Do not delete existing functional logic, comments, or TODOs without explanation.
+4. Completeness requirement: Output code must be complete. Placeholders like `// ... remaining code unchanged` are prohibited.
+5. Defensive programming: All APIs and functions must include basic error handling and logging.
+
+## Workflow Requirements
+
+- Step 1 (Think): Analyze the impact on `docs/spec.md` first, and list modification steps in the thinking phase.
+- Step 2 (Verify): Check whether any destructive change exists. If so, consult the user first.
+- Step 3 (Execute): Output code.
+- Step 4 (Document): After completion, proactively remind the user to update `docs/todo.md`.
