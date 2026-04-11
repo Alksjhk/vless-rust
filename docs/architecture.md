@@ -1,443 +1,420 @@
-# 架构设计 (Architecture Design)
+# 架构设计
 
-> 描述 "How to do it" — 系统如何设计和实现
+> 描述系统“怎么做”，说明模块职责、运行流程、非功能性设计与未来扩展边界。
 
-## 1. 系统架构
+## 1. 设计目标
 
-### 1.1 整体架构图
+项目当前架构围绕以下目标展开：
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           VLESS-Rust Server                         │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-│  │   CLI Args  │  │   Config    │  │  Public IP  │  │   Signals   │ │
-│  │   Parser    │  │   Loader    │  │   Fetcher   │  │   Handler   │ │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘ │
-│         └─────────────────┴─────────────────┴─────────────────┘     │
-│                               │                                     │
-│                         ┌─────┴─────┐                               │
-│                         │   main    │                               │
-│                         └─────┬─────┘                               │
-│                               │                                     │
-│                    ┌──────────┴──────────┐                          │
-│                    ▼                     ▼                          │
-│           ┌─────────────────┐  ┌─────────────────┐                  │
-│           │   TUI 模式      │  │  传统日志模式   │                  │
-│           │  (ratatui)      │  │  (tracing)      │                  │
-│           └────────┬────────┘  └─────────────────┘                  │
-│                    │                                                │
-│                    ▼                                                │
-│           ┌─────────────────┐                                       │
-│           │  VlessServer    │                                       │
-│           │  (server.rs)    │                                       │
-│           └────────┬────────┘                                       │
-│                    │                                                │
-│         ┌──────────┼──────────┐                                     │
-│         ▼          ▼          ▼                                     │
-│   ┌─────────┐ ┌─────────┐ ┌─────────┐                              │
-│   │ TCP模式 │ │ WS模式  │ │HTTP API │                              │
-│   │tcp.rs   │ │ws.rs    │ │api.rs   │                              │
-│   └────┬────┘ └────┬────┘ └────┬────┘                              │
-│        │           │           │                                    │
-│        └───────────┴───────────┘                                    │
-│                    │                                                │
-│         ┌──────────┴──────────┐                                     │
-│         ▼                     ▼                                     │
-│   ┌─────────────┐      ┌─────────────┐                              │
-│   │  protocol   │      │  address    │                              │
-│   │  (编解码)   │      │  (连接目标) │                              │
-│   └─────────────┘      └─────────────┘                              │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+- 单二进制、低依赖、便于跨平台部署
+- 代理核心路径尽量减少内存复制
+- 用清晰模块边界隔离协议、配置、UI、服务安装等职责
+- 在没有数据库的前提下保持配置和运行态足够简单
 
-### 1.2 模块依赖关系
+## 2. 总体架构
 
-```
+```text
 main.rs
-├── server (核心调度)
-│   ├── tcp ──────┬──> protocol (VLESS 编解码)
-│   ├── ws ───────┤    └──> address (目标连接)
-│   └── api ──────┤         └──> socket (TCP 调优)
-│       └──> http (请求解析/响应构建)
-│
-├── config (配置管理)
-├── wizard (交互式配置)
-├── service (Linux 服务安装)
-├── public_ip (公网 IP 获取)
-├── tui (终端界面)
-├── atomic_write (原子文件写入)
-└── version (版本信息)
+  ├─ config.rs         配置加载与序列化
+  ├─ wizard.rs         首次启动配置向导
+  ├─ public_ip.rs      公网 IP 探测
+  ├─ service.rs        Linux 服务安装/卸载
+  ├─ tui.rs            TUI 日志层
+  └─ server.rs         连接监听与协议调度
+       ├─ tcp.rs       VLESS over TCP
+       │   ├─ protocol.rs
+       │   ├─ address.rs
+       │   └─ socket.rs
+       ├─ ws.rs        VLESS over WebSocket
+       │   ├─ protocol.rs
+       │   ├─ address.rs
+       │   ├─ http.rs
+       │   └─ socket.rs
+       └─ api.rs       HTTP 信息页与链接接口
+           ├─ http.rs
+           └─ vless_link.rs
 ```
 
-## 2. 核心设计模式
+## 3. 模块职责
 
-### 2.1 协议多路复用
+| 模块 | 责任 |
+| --- | --- |
+| `main.rs` | 启动入口，参数解析，日志模式切换，组装服务 |
+| `config.rs` | 定义配置结构与默认值 |
+| `wizard.rs` | 在配置缺失时交互生成配置 |
+| `server.rs` | 创建监听器，接收连接，分发到 TCP / WS / HTTP 处理路径 |
+| `protocol.rs` | VLESS 请求与响应编解码、用户认证 |
+| `tcp.rs` | TCP 模式下的 VLESS 代理与 UDP over TCP |
+| `ws.rs` | WebSocket 握手、首帧解析与 WebSocket 代理转发 |
+| `api.rs` | 处理 `/` 与 `/?email=` 两类 HTTP 请求 |
+| `http.rs` | HTTP 请求识别、解析与统一响应构建 |
+| `address.rs` | 目标地址解析与目标连接建立 |
+| `socket.rs` | TCP 套接字调优 |
+| `public_ip.rs` | 并发查询外部服务以获取公网 IP |
+| `atomic_write.rs` | 原子写文件，避免配置写入中断损坏 |
+| `service.rs` | 生成并安装 systemd / OpenRC 服务 |
+| `version.rs` | 版本展示、启动横幅、状态信息输出 |
 
-服务器在单一端口上同时处理多种协议：
+## 4. 关键流程设计
 
-```rust
-// 通过 peek 检测协议类型
-let n = stream.peek(&mut peek_buf).await?;
-match detect_protocol(&peek_buf[..n]) {
-    ProtocolHint::HttpRequest => handle_http_request(...).await,
-    ProtocolHint::WebSocketUpgrade => handle_ws_connection(...).await,
-    ProtocolHint::VlessConnection => handle_tcp_connection(...).await,
-}
+### 4.1 启动流程
+
+```text
+读取命令行参数
+  -> 处理 --init / --remove
+  -> 加载 config.json
+  -> 配置不存在时启动 wizard
+  -> 获取公网 IP
+  -> 初始化 TUI 或 tracing
+  -> 构建 ServerConfig
+  -> 启动 Tokio 监听循环
 ```
 
-**优势**:
-- 无需多端口监听
-- 防火墙配置简单
-- 自动协议识别
+### 4.2 连接调度流程
 
-### 2.2 零拷贝数据流
+#### TCP 模式
 
-```rust
-// Bytes::split_to 避免数据复制
-let addons = if addons_length > 0 {
-    buf.split_to(addons_length as usize)  // 零拷贝切片
-} else {
-    Bytes::new()
-};
-
-// Arc 共享配置，避免每连接深拷贝
-user_emails: Arc<HashMap<Uuid, Option<Arc<str>>>>,
+```text
+accept TCP connection
+  -> peek 前 1024 字节
+  -> detect_protocol()
+     -> HTTP 请求: api.rs
+     -> WebSocket Upgrade: 仍按 HTTP 请求处理
+     -> 原始 VLESS: tcp.rs
 ```
 
-### 2.3 分层缓冲区策略
+说明：
 
-为减少内存分配，采用分层缓冲策略：
-- **栈上小缓冲区**: 1KB，用于 VLESS 协议头解析（头部通常 < 256 字节）
-- **栈上中缓冲区**: 8KB，用于 HTTP 请求头读取
-- **堆上大缓冲区**: 64KB（默认），用于 WebSocket 代理传输
+- 在 `TCP` 模式下，同一端口既能处理 VLESS，也能处理 HTTP 信息页
+- 由于检测基于请求头特征，HTTP 与 VLESS 不需要独立端口
 
-```rust
-// 栈上小缓冲区（VLESS 头通常 < 256 字节）
-let mut small_buf = [0u8; 1024];
-let n = stream.read(&mut small_buf).await?;
-let header_bytes = Bytes::copy_from_slice(&small_buf[..n]);
+#### WebSocket 模式
 
-// 栈上中缓冲区（HTTP 头通常 < 8KB）
-let mut http_buf = [0u8; 8192];
-let read_n = stream.read(&mut http_buf).await?;
-let header_bytes = Bytes::copy_from_slice(&http_buf[..read_n]);
-
-// 堆上大缓冲区（WebSocket 代理传输）
-let mut buffer = vec![0u8; 64 * 1024];
-
-// TCP 代理使用 tokio::io::copy（自带内部缓冲管理）
-tokio::io::copy(&mut client_read, &mut target_write).await
+```text
+accept TCP connection
+  -> detect_ws_connection()
+     -> 普通 HTTP 请求: api.rs
+     -> WebSocket Upgrade: ws.rs
+     -> 非 HTTP 请求: 直接拒绝
 ```
 
-## 3. 并发模型
+说明：
 
-### 3.1 Tokio Runtime 配置
+- `WebSocket` 模式下不接受原始 VLESS TCP 首包
+- 同一端口只复用 HTTP 信息页与 WebSocket Upgrade
 
-```rust
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 默认使用多线程调度器
-    // worker_threads = CPU 核心数
-}
+### 4.3 TCP 代理流程
+
+```text
+读取请求头
+  -> VlessRequest::decode()
+  -> UUID 认证
+  -> 发送 VLESS 响应头
+  -> 根据 Command 分发
+     -> Tcp: 建立目标 TCP 连接并双向 copy
+     -> Udp: 建立本地 UDP socket，做 UDP over TCP
+     -> Mux: 返回未实现错误
 ```
 
-### 3.2 每连接一任务
+### 4.4 WebSocket 代理流程
 
-```rust
-// 每个连接 spawning 一个独立任务
-tokio::spawn(async move {
-    if let Err(e) = handle_connection(stream, addr, config, perf_config).await {
-        error!("Error handling connection: {}", e);
-    }
-});
+```text
+读取并验证 HTTP Upgrade
+  -> 手动生成 Sec-WebSocket-Accept
+  -> 升级为 WebSocketStream
+  -> 读取首帧作为 VLESS 请求头
+  -> UUID 认证
+  -> 建立目标 TCP 连接
+  -> WebSocket <-> TCP 双向转发
 ```
 
-### 3.3 优雅关闭机制
+## 5. 并发模型
 
-使用双层信号通道实现优雅关闭：
+### 5.1 Tokio 多线程运行时
 
-- **broadcast 通道**：服务器内部使用，通知所有连接任务停止接受新连接
-- **watch 通道**：TUI 模式下，TUI 线程退出时通知服务器关闭
+- 使用 `#[tokio::main]`
+- 默认多线程调度器
+- 每个入站连接独立 `tokio::spawn`
 
-```rust
-// 服务器内部 broadcast 通道
-let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+### 5.2 双向转发模型
 
-// TUI 模式下的 watch 通道
-let (shutdown_tx_watch, shutdown_rx_watch) = tokio::sync::watch::channel(false);
+TCP 代理：
 
-// 主循环同时监听三种信号源
-tokio::select! {
-    result = server.run() => { ... }
-    _ = shutdown => {           // Unix: SIGINT/SIGTERM; Windows: Ctrl+C
-        shutdown_tx.send(()).ok();
-    }
-    _ = flag_check => {         // TUI 退出信号
-        shutdown_tx.send(()).ok();
-    }
-}
+- `client -> target` 一个任务
+- `target -> client` 一个任务
+- 使用 `tokio::io::copy` 做流式转发
+
+WebSocket 代理：
+
+- `ws -> target` 一个任务
+- `target -> ws` 一个任务
+- 以消息与字节流之间的转换为桥接
+
+### 5.3 优雅关闭
+
+当前关闭机制分两层：
+
+- `broadcast::channel<()>`: 通知服务停止接受新连接
+- `watch::channel<bool>`: TUI 退出后通知主服务关闭
+
+Unix 下监听：
+
+- `SIGINT`
+- `SIGTERM`
+
+非 Unix 下监听：
+
+- `Ctrl+C`
+
+## 6. 性能设计
+
+### 6.1 零拷贝与低分配策略
+
+- VLESS 解析使用 `Bytes` 和 `split_to`
+- 用户集合与邮箱映射使用 `Arc` 共享
+- HTTP 探测和 VLESS 首包解析优先使用栈缓冲区
+
+### 6.2 缓冲策略
+
+| 场景 | 策略 |
+| --- | --- |
+| 协议探测 | `1024` 字节栈缓冲区 |
+| HTTP 请求头 | `8192` 字节栈缓冲区 |
+| WebSocket 代理读写 | `64KB` 堆缓冲区 |
+| UDP 转发 | `16KB` 缓冲区 |
+
+### 6.3 TCP 调优
+
+通过 `socket.rs` 配置：
+
+- `TCP_NODELAY`
+- 接收缓冲区大小
+- 发送缓冲区大小
+- Keepalive
+
+### 6.4 编译优化
+
+`release` 配置启用：
+
+- `lto = "thin"`
+- `codegen-units = 1`
+- `opt-level = 3`
+- `panic = "abort"`
+- `strip = true`
+
+## 7. 数据库设计
+
+当前无数据库。
+
+架构决策：
+
+- 用户规模较小，优先使用静态配置文件
+- 启动时一次性加载全部配置，运行期只读
+- 这样能减少外部依赖、简化部署和跨平台适配
+
+如果未来引入数据库，建议优先承载：
+
+- 用户与 UUID 管理
+- 流量统计
+- 审计日志元数据
+- 管理面配置
+
+## 8. 缓存设计
+
+当前无独立缓存系统。
+
+现有“缓存式”对象主要是进程内只读共享数据：
+
+- `Arc<HashSet<Uuid>>`
+- `Arc<HashMap<Uuid, Option<Arc<str>>>>`
+- 启动时获取一次的公网 IP
+
+设计取舍：
+
+- 读多写少，进程内共享比引入 Redis 更合适
+- 当前没有需要跨实例共享的热点数据
+
+## 9. 消息队列设计
+
+当前无消息队列。
+
+原因：
+
+- 代理核心是同步转发，不涉及异步业务编排
+- 没有异步任务消费、削峰填谷或事件总线需求
+
+当前仅使用本地通道：
+
+- `mpsc`: TUI 日志传递
+- `broadcast`: 服务关闭通知
+- `watch`: TUI 退出信号
+
+## 10. 分布式锁设计
+
+当前无分布式锁。
+
+原因：
+
+- 单进程运行
+- 没有多实例共享写资源
+- 配置文件写入通过原子写规避部分竞争问题
+
+## 11. 错误处理
+
+### 11.1 错误传播
+
+- 统一使用 `anyhow::Result`
+- 在关键 I/O 节点补充上下文信息
+- 连接级错误由任务边界捕获并记录
+
+### 11.2 错误分层
+
+| 层级 | 典型错误 | 处理方式 |
+| --- | --- | --- |
+| 输入层 | 非法请求、路径非法、UUID 无效 | 返回错误响应或拒绝连接 |
+| 网络层 | 目标连接失败、读写失败、超时 | 记录日志并关闭连接 |
+| 启动层 | 配置解析失败、端口绑定失败 | 直接中止启动 |
+| 服务安装层 | init 系统不可用、权限不足 | 返回字符串错误并提示用户 |
+
+### 11.3 防御性校验
+
+- 校验 VLESS 版本号
+- 校验 VLESS 报文最小长度
+- 校验 WebSocket 路径
+- 校验 `Content-Length` 不超过 1MB
+- 拒绝包含 `..` 与 `\` 的 HTTP 路径
+
+## 12. 日志记录
+
+### 12.1 日志体系
+
+- 默认使用 `tracing`
+- TUI 模式下使用自定义 `Layer` 将日志发送到 `mpsc`
+- 非 TUI 模式下输出到标准日志
+
+### 12.2 建议日志分层
+
+| 级别 | 用途 |
+| --- | --- |
+| `ERROR` | 启动失败、严重内部错误 |
+| `WARN` | 认证失败、协议不支持、异常连接 |
+| `INFO` | 服务启动、连接建立、服务安装 |
+| `DEBUG` | 协议解析、目标连接、转发结束 |
+
+### 12.3 TUI 特性
+
+- 独立线程运行
+- 最多缓存 `1000` 条日志
+- 支持 `q` / `Esc` 退出
+- 支持方向键、`j/k`、`PageUp/PageDown` 滚动
+
+## 13. 监控设计
+
+当前没有完整监控系统，只有基础可观测性：
+
+- 启动横幅读取运行信息
+- TUI 实时查看服务状态
+- tracing 日志输出
+- 公网 IP 自动探测结果打印
+
+当前缺口：
+
+- 指标导出
+- 请求/连接计数
+- 延迟分位数统计
+- 追踪链路
+- 健康检查专用端点
+
+## 14. 测试策略
+
+### 14.1 当前测试类型
+
+- 协议解析测试
+- HTTP / WebSocket 工具函数测试
+- 链接生成测试
+- 原子写入测试
+- 公网 IP 测试
+- 服务器配置测试
+- 部分 TCP 行为测试
+
+### 14.2 测试目录约定
+
+- 所有集成测试集中在 `tests/`
+- 生产代码不混入调试逻辑
+
+### 14.3 后续测试方向
+
+- 端到端代理回归测试
+- WebSocket 完整握手与转发测试
+- 服务安装脚本测试
+- 性能基准测试
+- 模糊测试
+
+## 15. 部署设计
+
+### 15.1 本地二进制部署
+
+最小部署单元：
+
+```text
+vless(.exe)
+config.json
 ```
 
-### 3.4 双向代理并发
-
-```rust
-// 两个独立任务处理双向流量
-let client_to_target = tokio::spawn(async move {
-    tokio::io::copy(&mut client_read, &mut target_write).await
-});
-
-let target_to_client = tokio::spawn(async move {
-    tokio::io::copy(&mut target_read, &mut client_write).await
-});
-
-let _ = tokio::join!(client_to_target, target_to_client);
-```
-
-## 4. 错误处理策略
-
-### 4.1 错误传播
-
-使用 `anyhow` 进行上下文丰富的错误传播：
-
-```rust
-use anyhow::{anyhow, Result, Context};
-
-async fn handle_connection(...) -> Result<()> {
-    let stream = TcpStream::connect(addr).await
-        .with_context(|| format!("Failed to connect to {}", addr))?;
-    
-    if n == 0 {
-        return Err(anyhow!("Connection closed by client"));
-    }
-    Ok(())
-}
-```
-
-### 4.2 错误分类
-
-| 错误类型 | 处理方式 | 日志级别 |
-|----------|----------|----------|
-| 连接重置/关闭 | 静默处理，关闭连接 | DEBUG |
-| 认证失败 | 记录客户端地址 | WARN |
-| 协议错误 | 记录错误详情 | ERROR |
-| 目标连接失败 | 记录目标地址 | WARN |
-| 内部错误 | 记录堆栈信息 | ERROR |
-
-### 4.3 防御性编程
-
-```rust
-// 输入验证
-if version != VLESS_VERSION_BETA && version != VLESS_VERSION_RELEASE {
-    return Err(anyhow!("Unsupported VLESS version: {}", version));
-}
-
-// 长度检查
-if buf.len() < 18 {
-    return Err(anyhow!("Buffer too short for VLESS request"));
-}
-
-// 路径安全检查
-if decoded_path.contains("..") || decoded_path.contains('\\') {
-    return None;  // 防止路径遍历
-}
-```
-
-## 5. 日志与监控
-
-### 5.1 日志级别使用规范
-
-| 级别 | 使用场景 |
-|------|----------|
-| ERROR | 服务启动失败、关键内部错误 |
-| WARN | 认证失败、连接异常、超时 |
-| INFO | 连接建立/关闭、配置加载、用户操作 |
-| DEBUG | 协议解析、数据流向、性能指标 |
-| TRACE | 详细字节级调试（开发时使用） |
-
-### 5.2 TUI 日志架构
-
-```
-┌─────────────────────────────────────────┐
-│           TUI Dashboard                 │
-│  ┌─────────────────────────────────┐    │
-│  │         Server Status           │    │
-│  │  Listening: 0.0.0.0:443         │    │
-│  │  Protocol: TCP                  │    │
-│  └─────────────────────────────────┘    │
-│  ┌─────────────────────────────────┐    │
-│  │     Scrollable Log View         │    │
-│  │  [10:23:45] INFO User auth...   │    │
-│  │  [10:23:46] DEBUG Proxy conn... │    │
-│  │  [10:23:50] INFO Conn closed    │    │
-│  └─────────────────────────────────┘    │
-└─────────────────────────────────────────┘
-```
-
-实现机制：
-- 自定义 `tracing::Layer` 发送日志到 `mpsc` 通道
-- TUI 线程接收日志并渲染
-- 最大保留 1000 条日志条目
-
-## 6. 安全配置
+### 15.2 Linux 服务部署
 
-### 6.1 用户认证
+支持：
 
-- UUID 白名单机制
-- 配置时自动生成随机 UUID
-- 运行时 O(1) HashSet 查询
+- `systemd` 用户服务
+- `OpenRC` 系统服务
 
-### 6.2 HTTP 安全头
+服务特征：
 
-所有 HTTP 响应包含以下安全头：
+- 工作目录为可执行文件所在目录
+- 启动命令自动附带 `--no-tui`
+- systemd 使用 `Restart=on-failure`
 
-```
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-X-XSS-Protection: 1; mode=block
-Referrer-Policy: no-referrer
-Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline' 'unsafe-hashes'; script-src 'none'
-```
+### 15.3 跨平台构建
 
-### 6.3 配置文件权限
+CI 目标与本地构建目标保持一致：
 
-```rust
-// Unix: 600 (rw-------)
-atomic_write_file_with_perms(&config_path, &json, 0o600)?;
-```
+- Windows x64
+- Linux x64 musl
+- Linux ARM64 musl
+- Linux ARMv7 musl
 
-### 6.4 输入验证
+## 16. 安全设计
 
-- HTTP Content-Length 限制 (< 1MB，仅 WebSocket 握手阶段检查)
-- WebSocket 路径格式验证（必须与配置匹配）
-- UUID 格式验证
-- 路径遍历防护（拒绝含 `..` 或 `\` 的路径）
+### 16.1 认证
 
-## 7. 性能优化
+- 基于 UUID 白名单
+- 运行期使用 `HashSet` 做快速校验
 
-### 7.1 TCP 调优
+### 16.2 HTTP 面
 
-```rust
-// 启用 TCP_NODELAY 降低延迟
-stream.set_nodelay(true)?;
+- 仅暴露简单只读接口
+- 统一添加安全响应头
+- 限制请求头体积
+- 拒绝路径遍历特征
 
-// Keepalive 防止 NAT 超时
-let keepalive = TcpKeepalive::new()
-    .with_time(Duration::from_secs(60))
-    .with_interval(Duration::from_secs(10));
-socket.set_tcp_keepalive(&keepalive)?;
-```
+### 16.3 配置文件
 
-### 7.2 内存优化
+- 缺省通过原子写入生成
+- Unix 下写入权限为 `0o600`
+- 服务安装前检查配置路径冲突和可写状态
 
-| 优化项 | 实现方式 |
-|--------|----------|
-| 内存分配器 | mimalloc（替代默认分配器） |
-| 零拷贝解析 | Bytes crate 切片共享 |
-| 栈上小缓冲 | 1KB 栈数组用于 VLESS 头解析，8KB 栈数组用于 HTTP 头 |
-| 配置共享 | Arc<T> 避免每连接克隆 |
-| TCP 内部缓冲 | tokio::io::copy 自带缓冲管理 |
+### 16.4 平台安全边界
 
-### 7.3 编译优化
+- 非 root 的 systemd 用户服务优先降低权限需求
+- OpenRC 安装明确要求 root
+- Windows 仅做资源嵌入，不额外引入服务权限逻辑
 
-```toml
-[profile.release]
-lto = "thin"          # 链接时优化
-codegen-units = 1     # 单代码生成单元
-opt-level = 3         # 最高优化级别
-panic = "abort"       # 移除 panic 处理开销
-strip = true          # 剥离符号表
-```
+## 17. 扩展建议
 
-## 8. 平台适配
+优先级较高的未来扩展方向：
 
-### 8.1 条件编译
-
-```rust
-// 信号处理
-#[cfg(unix)]
-let mut sigint = signal(SignalKind::interrupt())?;
-
-#[cfg(not(unix))]
-let _ = signal::ctrl_c().await;
-
-// 文件权限
-#[cfg(unix)]
-std::fs::set_permissions(path, Permissions::from_mode(0o600))?;
-
-// 内存分配器
-#[cfg(not(target_env = "musl"))]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-```
-
-### 8.2 平台特定依赖
-
-```toml
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.52", features = [...] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.build-dependencies]
-winres = "0.1"
-embed-resource = "2"
-```
-
-## 9. 部署架构
-
-### 9.1 独立部署
-
-```
-┌─────────────────┐
-│  vless binary   │
-│  config.json    │  <-- 同一目录
-└─────────────────┘
-```
-
-### 9.2 系统服务部署 (Linux)
-
-**systemd 用户服务**:
-```
-~/.config/systemd/user/vless-rust-serve.service
-```
-
-**OpenRC 系统服务**:
-```
-/etc/init.d/vless-rust-serve
-```
-
-### 9.3 容器化部署
-
-静态链接的二进制可在最小容器（如 scratch、Alpine）中运行：
-
-```dockerfile
-FROM scratch
-COPY vless /vless
-COPY config.json /config.json
-EXPOSE 443
-ENTRYPOINT ["/vless"]
-```
-
-## 10. 扩展点
-
-### 10.1 新增传输协议
-
-1. 在 `config.rs` 添加新协议类型
-2. 在 `server.rs` 添加协议检测逻辑
-3. 实现新的处理器模块（如 `grpc.rs`）
-4. 更新 `detect_protocol()` 函数
-
-### 10.2 新增认证方式
-
-1. 扩展 `ServerConfig` 添加认证配置
-2. 修改 `authenticate_request()` 支持多种认证
-3. 更新配置向导
-
-### 10.3 新增 API 端点
-
-1. 在 `api.rs` 添加路由处理
-2. 更新 `http.rs` 添加响应构建器
-3. 实现业务逻辑
+1. 为传输层补充 TLS / WSS
+2. 为运行态补充指标与连接统计
+3. 引入管理型 API 与动态用户管理
+4. 补齐 Mux 与 WebSocket 下 UDP 能力
+5. 为多实例场景重新评估数据库与缓存方案
